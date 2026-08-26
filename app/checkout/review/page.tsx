@@ -159,12 +159,6 @@ export default function ReviewPage() {
 
   useEffect(() => {
     try {
-      /*
-       * =====================================================
-       * CUSTOMER DETAILS
-       * =====================================================
-       */
-
       const savedCustomer =
         localStorage.getItem(
           "rmx_customer_details"
@@ -215,26 +209,8 @@ export default function ReviewPage() {
         });
       }
 
-      /*
-       * =====================================================
-       * IMPORTANT:
-       *
-       * ALWAYS use the CURRENT checkout configuration first.
-       *
-       * This prevents an old rmx_order_details value such as
-       * Standard / ₹999 from overwriting the customer's
-       * current Mini selection.
-       * =====================================================
-       */
-
       let currentOrder:
         OrderDetails | null = null;
-
-      /*
-       * -----------------------------------------------------
-       * SOURCE 1 — CANONICAL CHECKOUT CONFIG
-       * -----------------------------------------------------
-       */
 
       const savedConfig =
         localStorage.getItem(
@@ -275,12 +251,6 @@ export default function ReviewPage() {
           );
         }
       }
-
-      /*
-       * -----------------------------------------------------
-       * SOURCE 2 — SESSION CHECKOUT ORDER
-       * -----------------------------------------------------
-       */
 
       if (!currentOrder) {
         const savedSessionOrder =
@@ -323,12 +293,6 @@ export default function ReviewPage() {
           }
         }
       }
-
-      /*
-       * -----------------------------------------------------
-       * SOURCE 3 — FINAL ORDER STORAGE
-       * -----------------------------------------------------
-       */
 
       if (!currentOrder) {
         const savedFinalOrder =
@@ -376,15 +340,6 @@ export default function ReviewPage() {
         }
       }
 
-      /*
-       * -----------------------------------------------------
-       * SOURCE 4 — OLD ORDER STORAGE
-       *
-       * ONLY use this if no current checkout
-       * configuration exists.
-       * -----------------------------------------------------
-       */
-
       if (!currentOrder) {
         const savedOrder =
           localStorage.getItem(
@@ -430,12 +385,6 @@ export default function ReviewPage() {
         }
       }
 
-      /*
-       * -----------------------------------------------------
-       * SOURCE 5 — URL FALLBACK
-       * -----------------------------------------------------
-       */
-
       if (!currentOrder) {
         const params =
           new URLSearchParams(
@@ -469,16 +418,6 @@ export default function ReviewPage() {
         );
       }
 
-      /*
-       * -----------------------------------------------------
-       * FINAL SAFETY:
-       *
-       * Recalculate price from size.
-       *
-       * NEVER use stored price.
-       * -----------------------------------------------------
-       */
-
       const finalOrder =
         calculateOrder(
           currentOrder.size,
@@ -490,10 +429,6 @@ export default function ReviewPage() {
       setOrder(
         finalOrder
       );
-
-      /*
-       * Normalize current checkout storage.
-       */
 
       sessionStorage.setItem(
         "rmx_checkout_order",
@@ -515,12 +450,6 @@ export default function ReviewPage() {
           finalOrder
         )
       );
-
-      /*
-       * =====================================================
-       * PHOTO
-       * =====================================================
-       */
 
       const savedPhoto =
         localStorage.getItem(
@@ -555,12 +484,6 @@ export default function ReviewPage() {
     }
   }, []);
 
-  /*
-   * =======================================================
-   * FINAL VALUES
-   * =======================================================
-   */
-
   const quantity =
     Math.max(
       1,
@@ -592,12 +515,6 @@ export default function ReviewPage() {
     subtotal -
     discount;
 
-  /*
-   * =======================================================
-   * DISPLAY HELPERS
-   * =======================================================
-   */
-
   const formatLabel = (
     value: string
   ) => {
@@ -613,22 +530,10 @@ export default function ReviewPage() {
       );
   };
 
-  /*
-   * =======================================================
-   * BACK
-   * =======================================================
-   */
-
   const handleBack = () => {
     window.location.href =
       "/checkout/customer-details";
   };
-
-  /*
-   * =======================================================
-   * PAYMENT
-   * =======================================================
-   */
 
   const handlePlaceOrder =
     () => {
@@ -647,13 +552,6 @@ export default function ReviewPage() {
         Date.now()
           .toString()
           .slice(-8);
-
-      /*
-       * Create the FINAL normalized order.
-       *
-       * This is the exact order that will
-       * be sent to the payment page.
-       */
 
       const finalOrder = {
         orderId,
@@ -689,104 +587,96 @@ export default function ReviewPage() {
           total,
         },
 
-        photo,
-
         createdAt:
           new Date().toISOString(),
       };
 
-      /*
-       * FINAL ORDER
-       */
-
-      localStorage.setItem(
-        "rmx_final_order",
-        JSON.stringify(
-          finalOrder
-        )
-      );
-
-      localStorage.setItem(
-        "rmx_order_id",
-        orderId
-      );
-
-      /*
-       * NORMALIZED ORDER
-       */
-
-      const normalizedOrder =
-        {
-          size:
-            normalizedSize,
-
-          frame:
-            normalizeFrame(
-              order.frame
-            ),
-
-          lithophane:
-            normalizeLithophane(
-              order.lithophane
-            ),
-
-          quantity,
-
-          price:
-            unitPrice,
-
-          subtotal,
-
-          discount,
-
-          total,
-        };
-
-      sessionStorage.setItem(
-        "rmx_checkout_order",
-        JSON.stringify(
-          normalizedOrder
-        )
-      );
-
-      localStorage.setItem(
-        "rmx_order_details",
-        JSON.stringify(
-          normalizedOrder
-        )
-      );
-
-      localStorage.setItem(
-        "orderDetails",
-        JSON.stringify(
-          normalizedOrder
-        )
-      );
-
-      /*
-       * PHOTO
-       */
-
-      if (photo) {
+      try {
         localStorage.setItem(
-          "rmx_checkout_photo",
-          photo
+          "rmx_final_order",
+          JSON.stringify(
+            finalOrder
+          )
+        );
+
+        localStorage.setItem(
+          "rmx_order_id",
+          orderId
+        );
+
+        const normalizedOrder =
+          {
+            size:
+              normalizedSize,
+
+            frame:
+              normalizeFrame(
+                order.frame
+              ),
+
+            lithophane:
+              normalizeLithophane(
+                order.lithophane
+              ),
+
+            quantity,
+
+            price:
+              unitPrice,
+
+            subtotal,
+
+            discount,
+
+            total,
+          };
+
+        sessionStorage.setItem(
+          "rmx_checkout_order",
+          JSON.stringify(
+            normalizedOrder
+          )
+        );
+
+        localStorage.setItem(
+          "rmx_order_details",
+          JSON.stringify(
+            normalizedOrder
+          )
+        );
+
+        localStorage.setItem(
+          "orderDetails",
+          JSON.stringify(
+            normalizedOrder
+          )
+        );
+
+        if (photo) {
+          localStorage.setItem(
+            "rmx_checkout_photo",
+            photo
+          );
+        }
+
+        window.location.href =
+          "/checkout/payment";
+
+      } catch (storageError) {
+        console.error(
+          "RMX checkout storage error:",
+          storageError
+        );
+
+        setPlacingOrder(
+          false
+        );
+
+        alert(
+          "Unable to continue to payment. Please try again."
         );
       }
-
-      /*
-       * GO TO PAYMENT
-       */
-
-      window.location.href =
-        "/checkout/payment";
     };
-
-  /*
-   * =======================================================
-   * UI
-   * =======================================================
-   */
 
   return (
     <main
