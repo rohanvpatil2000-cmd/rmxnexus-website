@@ -559,6 +559,9 @@ export default function PaymentPage() {
             );
 
             setLoading(false);
+
+            window.location.href =
+              "/checkout/review";
           },
         },
       };

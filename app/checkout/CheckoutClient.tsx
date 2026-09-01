@@ -13,25 +13,15 @@ import {
 } from "lucide-react";
 
 const sizes = {
-  mini: {
-    name: "Mini",
-    dimensions: "12 × 12 cm",
-    price: 1, // TEMPORARY LIVE TEST PRICE
-  },
   standard: {
-    name: "Standard",
-    dimensions: "15 × 15 cm",
-    price: 999,
+    name: "11.2 cm",
+    dimensions: "11.2 × 11.2 cm",
+    price: 799,
   },
   large: {
-    name: "Large",
-    dimensions: "20 × 20 cm",
-    price: 1399,
-  },
-  xl: {
-    name: "XL",
-    dimensions: "25 × 25 cm",
-    price: 1899,
+    name: "16.7 cm",
+    dimensions: "16.7 × 16.7 cm",
+    price: 1199,
   },
 } as const;
 
@@ -109,20 +99,24 @@ export default function CheckoutPage() {
   const [isContinuing, setIsContinuing] =
     useState(false);
 
-  const subtotal = size.price * quantity;
+  const subtotal =
+    size.price * quantity;
 
   const discount =
     quantity >= 2
       ? Math.round(subtotal * 0.1)
       : 0;
 
-  const total = subtotal - discount;
+  const total =
+    subtotal - discount;
 
   const selectionFolder =
     `${sizeId}-${frameId}-${lithophaneId}`;
 
   const heroImage =
-    `/images/lithophane/${selectionFolder}/01-hero.jpg`;
+    sizeId === "large"
+      ? "/images/lithophane/large/RMX_LARGE_16.7cm_01.jpg"
+      : "/images/lithophane/standard/RMX_STANDARD_11.2cm_01.jpg";
 
   const selectionText = useMemo(
     () =>
@@ -498,54 +492,42 @@ export default function CheckoutPage() {
             <div className="mt-8 grid gap-4 sm:grid-cols-3">
 
               <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
-
                 <ShieldCheck
                   className="mb-2 text-emerald-400"
                   size={20}
                 />
-
                 <p className="text-sm font-bold">
                   Secure order
                 </p>
-
                 <p className="mt-1 text-xs text-gray-500">
                   Your details stay private.
                 </p>
-
               </div>
 
               <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
-
                 <Truck
                   className="mb-2 text-cyan-400"
                   size={20}
                 />
-
                 <p className="text-sm font-bold">
                   Fast shipping
                 </p>
-
                 <p className="mt-1 text-xs text-gray-500">
                   Estimated 2–4 days.
                 </p>
-
               </div>
 
               <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
-
                 <Check
                   className="mb-2 text-cyan-400"
                   size={20}
                 />
-
                 <p className="text-sm font-bold">
                   Made to order
                 </p>
-
                 <p className="mt-1 text-xs text-gray-500">
                   Printed for you.
                 </p>
-
               </div>
 
             </div>
@@ -666,43 +648,26 @@ export default function CheckoutPage() {
             <div className="mt-6 space-y-3 border-t border-white/10 pt-5 text-sm">
 
               <div className="flex justify-between text-gray-400">
-
-                <span>
-                  Subtotal
-                </span>
-
+                <span>Subtotal</span>
                 <span>
                   ₹{subtotal.toLocaleString("en-IN")}
                 </span>
-
               </div>
 
               {discount > 0 && (
-
                 <div className="flex justify-between text-emerald-400">
-
-                  <span>
-                    10% discount
-                  </span>
-
+                  <span>10% discount</span>
                   <span>
                     -₹{discount.toLocaleString("en-IN")}
                   </span>
-
                 </div>
-
               )}
 
               <div className="flex justify-between pt-2 text-xl font-black">
-
-                <span>
-                  Total
-                </span>
-
+                <span>Total</span>
                 <span>
                   ₹{total.toLocaleString("en-IN")}
                 </span>
-
               </div>
 
             </div>
