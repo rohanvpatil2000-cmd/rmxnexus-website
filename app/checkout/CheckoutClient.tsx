@@ -49,6 +49,13 @@ type SizeId = keyof typeof sizes;
 type LithophaneId = keyof typeof lithophaneColors;
 type FrameId = keyof typeof frameColors;
 
+type UploadedPhotoInfo = {
+  storagePath: string;
+  originalName: string;
+  mimeType: string;
+  fileSize: number;
+};
+
 export default function CheckoutPage() {
   const params = useSearchParams();
 
@@ -93,6 +100,9 @@ export default function CheckoutPage() {
   const [previewUrl, setPreviewUrl] =
     useState("");
 
+  const [uploadedPhoto, setUploadedPhoto] =
+    useState<UploadedPhotoInfo | null>(null);
+
   const [error, setError] =
     useState("");
 
@@ -109,9 +119,6 @@ export default function CheckoutPage() {
 
   const total =
     subtotal - discount;
-
-  const selectionFolder =
-    `${sizeId}-${frameId}-${lithophaneId}`;
 
   const heroImage =
     sizeId === "large"
@@ -139,6 +146,7 @@ export default function CheckoutPage() {
     }
 
     setError("");
+    setUploadedPhoto(null);
 
     const allowedTypes = [
       "image/jpeg",
@@ -186,6 +194,7 @@ export default function CheckoutPage() {
 
     setPhoto(null);
     setPreviewUrl("");
+    setUploadedPhoto(null);
     setError("");
   };
 
@@ -225,6 +234,73 @@ export default function CheckoutPage() {
     );
   };
 
+  const uploadPhotoToSupabase =
+    async (
+      file: File
+    ): Promise<UploadedPhotoInfo> => {
+      const formData =
+        new FormData();
+
+      formData.append(
+        "file",
+        file
+      );
+
+      const response =
+        await fetch(
+          "/api/upload-photo",
+          {
+            method: "POST",
+            body: formData,
+          }
+        );
+
+      let result:
+        | {
+            success?: boolean;
+            storagePath?: string;
+            originalName?: string;
+            mimeType?: string;
+            fileSize?: number;
+            error?: string;
+          }
+        | null = null;
+
+      try {
+        result =
+          await response.json();
+      } catch {
+        throw new Error(
+          "The photo upload service returned an invalid response."
+        );
+      }
+
+      if (
+        !response.ok ||
+        !result?.success ||
+        !result.storagePath
+      ) {
+        throw new Error(
+          result?.error ||
+            "Unable to upload your photo."
+        );
+      }
+
+      return {
+        storagePath:
+          result.storagePath,
+        originalName:
+          result.originalName ||
+          file.name,
+        mimeType:
+          result.mimeType ||
+          file.type,
+        fileSize:
+          result.fileSize ||
+          file.size,
+      };
+    };
+
   const continueToCustomerDetails =
     async () => {
       if (isContinuing) {
@@ -243,6 +319,26 @@ export default function CheckoutPage() {
       setIsContinuing(true);
 
       try {
+        /*
+         * Upload the original image to the
+         * private Supabase Storage bucket.
+         *
+         * The browser never receives the
+         * server-only Supabase secret key.
+         */
+        const supabasePhoto =
+          await uploadPhotoToSupabase(
+            photo
+          );
+
+        setUploadedPhoto(
+          supabasePhoto
+        );
+
+        /*
+         * Keep the existing local preview
+         * behavior for the checkout pages.
+         */
         const photoDataUrl =
           await fileToDataUrl(photo);
 
@@ -270,6 +366,18 @@ export default function CheckoutPage() {
           photoName: photo.name,
           photoType: photo.type,
           photoSize: photo.size,
+
+          photoStoragePath:
+            supabasePhoto.storagePath,
+
+          photoStorageName:
+            supabasePhoto.originalName,
+
+          photoStorageMimeType:
+            supabasePhoto.mimeType,
+
+          photoStorageSize:
+            supabasePhoto.fileSize,
 
           createdAt:
             new Date().toISOString(),
@@ -305,6 +413,9 @@ export default function CheckoutPage() {
             subtotal,
             discount,
             total,
+
+            photoStoragePath:
+              supabasePhoto.storagePath,
           })
         );
 
@@ -333,6 +444,11 @@ export default function CheckoutPage() {
           photoDataUrl
         );
 
+        localStorage.setItem(
+          "rmx_photo_storage_path",
+          supabasePhoto.storagePath
+        );
+
         sessionStorage.setItem(
           "rmx_checkout_config",
           JSON.stringify(orderData)
@@ -340,14 +456,16 @@ export default function CheckoutPage() {
 
         window.location.href =
           "/checkout/customer-details";
-      } catch (storageError) {
+      } catch (uploadError) {
         console.error(
-          "Unable to save checkout information:",
-          storageError
+          "Unable to save checkout photo:",
+          uploadError
         );
 
         setError(
-          "Unable to save your photo. Please try a smaller image and try again."
+          uploadError instanceof Error
+            ? uploadError.message
+            : "Unable to save your photo. Please try again."
         );
 
         setIsContinuing(false);
@@ -468,7 +586,9 @@ export default function CheckoutPage() {
                     </p>
 
                     <p className="mt-1 text-xs text-gray-500">
-                      Photo ready for personalization
+                      {uploadedPhoto
+                        ? "Photo securely saved"
+                        : "Photo ready for upload"}
                     </p>
 
                   </div>
