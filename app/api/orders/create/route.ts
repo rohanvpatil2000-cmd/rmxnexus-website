@@ -3,20 +3,90 @@ import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 
+type CustomerInput = {
+  fullName?: string;
+  mobile?: string;
+  email?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  pincode?: string;
+};
+
+type OrderInput = {
+  size?: string;
+  frame?: string;
+  lithophane?: string;
+  quantity?: number;
+};
+
+type PhotoInput = {
+  storagePath?: string;
+  originalName?: string;
+  mimeType?: string;
+  fileSize?: number;
+};
+
 const SIZE_PRICES: Record<string, number> = {
   standard: 799,
   large: 1199,
 };
 
-const ALLOWED_FRAMES = new Set([
-  "black",
-  "grey",
-]);
+function normalizeSize(value: string | undefined): string {
+  const normalized = (value || "").trim().toLowerCase();
 
-const ALLOWED_LITHOPHANES = new Set([
-  "natural-white",
-  "warm-white",
-]);
+  if (normalized === "large") {
+    return "large";
+  }
+
+  return "standard";
+}
+
+function normalizeFrame(value: string | undefined): string {
+  const normalized = (value || "").trim().toLowerCase();
+
+  if (
+    normalized === "grey" ||
+    normalized === "gray" ||
+    normalized === "graphite grey" ||
+    normalized === "graphite gray" ||
+    normalized === "classic grey"
+  ) {
+    return "grey";
+  }
+
+  return "black";
+}
+
+function normalizeLithophane(value: string | undefined): string {
+  const normalized = (value || "").trim().toLowerCase();
+
+  if (
+    normalized === "warm-white" ||
+    normalized === "warm white"
+  ) {
+    return "warm-white";
+  }
+
+  return "natural-white";
+}
+
+function cleanText(value: string | undefined): string {
+  return (value || "").trim();
+}
+
+function generateOrderNumber(): string {
+  const timestampPart =
+    Date.now().toString(36).toUpperCase();
+
+  const randomPart =
+    Math.random()
+      .toString(36)
+      .slice(2, 8)
+      .toUpperCase();
+
+  return `RMX-${timestampPart}-${randomPart}`;
+}
 
 function getSupabaseAdmin() {
   const supabaseUrl =
@@ -49,125 +119,49 @@ function getSupabaseAdmin() {
   );
 }
 
-function normalizeSize(value: unknown) {
-  const size =
-    String(value || "")
-      .trim()
-      .toLowerCase();
-
-  return size === "large"
-    ? "large"
-    : "standard";
-}
-
-function normalizeFrame(value: unknown) {
-  const frame =
-    String(value || "")
-      .trim()
-      .toLowerCase();
-
-  return frame === "grey"
-    ? "grey"
-    : "black";
-}
-
-function normalizeLithophane(value: unknown) {
-  const lithophane =
-    String(value || "")
-      .trim()
-      .toLowerCase();
-
-  return lithophane === "warm-white"
-    ? "warm-white"
-    : "natural-white";
-}
-
-function createOrderNumber() {
-  const timestamp =
-    Date.now().toString(36).toUpperCase();
-
-  const randomPart =
-    crypto
-      .randomUUID()
-      .replace(/-/g, "")
-      .slice(0, 6)
-      .toUpperCase();
-
-  return `RMX-${timestamp}-${randomPart}`;
-}
-
 export async function POST(
   request: Request
 ) {
   try {
-    const body =
-      await request.json();
+    const body = await request.json();
 
     const customer =
-      body?.customer;
+      (body?.customer || {}) as CustomerInput;
 
     const order =
-      body?.order;
+      (body?.order || {}) as OrderInput;
 
-    const photo =
-      body?.photo;
+    const rawPhotos =
+      body?.photos;
 
-    if (!customer || !order) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "Customer and order details are required.",
-        },
-        { status: 400 }
-      );
-    }
+    /*
+     * =====================================================
+     * CUSTOMER VALIDATION
+     * =====================================================
+     */
 
-    const customerName =
-      String(
-        customer.fullName ||
-          customer.name ||
-          ""
-      ).trim();
+    const fullName =
+      cleanText(customer.fullName);
 
-    const customerMobile =
-      String(
-        customer.mobile ||
-          ""
-      ).trim();
+    const mobile =
+      cleanText(customer.mobile);
 
-    const customerEmail =
-      String(
-        customer.email ||
-          ""
-      ).trim();
+    const email =
+      cleanText(customer.email);
 
     const address =
-      String(
-        customer.address ||
-          ""
-      ).trim();
+      cleanText(customer.address);
 
     const city =
-      String(
-        customer.city ||
-          ""
-      ).trim();
+      cleanText(customer.city);
 
     const state =
-      String(
-        customer.state ||
-          "Maharashtra"
-      ).trim();
+      cleanText(customer.state);
 
-    const pinCode =
-      String(
-        customer.pincode ||
-          customer.pinCode ||
-          ""
-      ).trim();
+    const pincode =
+      cleanText(customer.pincode);
 
-    if (!customerName) {
+    if (!fullName) {
       return NextResponse.json(
         {
           success: false,
@@ -178,16 +172,12 @@ export async function POST(
       );
     }
 
-    if (
-      !/^[6-9]\d{9}$/.test(
-        customerMobile
-      )
-    ) {
+    if (!mobile) {
       return NextResponse.json(
         {
           success: false,
           error:
-            "Valid 10-digit mobile number is required.",
+            "Mobile number is required.",
         },
         { status: 400 }
       );
@@ -215,7 +205,18 @@ export async function POST(
       );
     }
 
-    if (!pinCode) {
+    if (!state) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "State is required.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (!pincode) {
       return NextResponse.json(
         {
           success: false,
@@ -225,6 +226,12 @@ export async function POST(
         { status: 400 }
       );
     }
+
+    /*
+     * =====================================================
+     * ORDER NORMALIZATION
+     * =====================================================
+     */
 
     const size =
       normalizeSize(order.size);
@@ -237,13 +244,29 @@ export async function POST(
         order.lithophane
       );
 
-    const quantity = Math.max(
-      1,
-      Math.min(
-        10,
-        Number(order.quantity) || 1
-      )
-    );
+    const quantity =
+      Number(order.quantity);
+
+    if (
+      !Number.isInteger(quantity) ||
+      quantity < 1 ||
+      quantity > 10
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Quantity must be an integer between 1 and 10.",
+        },
+        { status: 400 }
+      );
+    }
+
+    /*
+     * =====================================================
+     * SERVER-SIDE PRICING
+     * =====================================================
+     */
 
     const unitPrice =
       SIZE_PRICES[size];
@@ -261,132 +284,241 @@ export async function POST(
     const total =
       subtotal - discount;
 
+    /*
+     * =====================================================
+     * MULTI-PHOTO VALIDATION
+     * =====================================================
+     */
+
+    if (!Array.isArray(rawPhotos)) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Photos are required.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const photos =
+      rawPhotos as PhotoInput[];
+
     if (
-      !ALLOWED_FRAMES.has(frame)
+      photos.length !==
+      quantity
     ) {
       return NextResponse.json(
         {
           success: false,
           error:
-            "Invalid frame selection.",
+            `Exactly ${quantity} photo${
+              quantity === 1
+                ? ""
+                : "s"
+            } is required for quantity ${quantity}.`,
         },
         { status: 400 }
       );
     }
 
-    if (
-      !ALLOWED_LITHOPHANES.has(
-        lithophane
-      )
+    /*
+     * Validate every uploaded photo before creating the
+     * database order.
+     */
+
+    for (
+      let index = 0;
+      index < photos.length;
+      index++
     ) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "Invalid lithophane selection.",
-        },
-        { status: 400 }
-      );
+      const photo =
+        photos[index];
+
+      const storagePath =
+        cleanText(
+          photo?.storagePath
+        );
+
+      if (!storagePath) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              `Photo ${index + 1} is missing its storage path.`,
+          },
+          { status: 400 }
+        );
+      }
+
+      if (
+        !storagePath.startsWith(
+          "orders/"
+        )
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              `Photo ${index + 1} has an invalid storage path.`,
+          },
+          { status: 400 }
+        );
+      }
+
+      const mimeType =
+        cleanText(
+          photo?.mimeType
+        );
+
+      if (
+        mimeType &&
+        ![
+          "image/jpeg",
+          "image/png",
+          "image/webp",
+        ].includes(mimeType)
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              `Photo ${index + 1} has an unsupported image type.`,
+          },
+          { status: 400 }
+        );
+      }
+
+      const fileSize =
+        Number(
+          photo?.fileSize
+        );
+
+      if (
+        !Number.isFinite(
+          fileSize
+        ) ||
+        fileSize <= 0
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              `Photo ${index + 1} has an invalid file size.`,
+          },
+          { status: 400 }
+        );
+      }
+
+      if (
+        fileSize >
+        10 * 1024 * 1024
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              `Photo ${index + 1} exceeds the 10MB limit.`,
+          },
+          { status: 400 }
+        );
+      }
     }
 
-    const storagePath =
-      String(
-        photo?.storagePath ||
-          ""
-      ).trim();
-
-    if (!storagePath) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "Uploaded photo is not available.",
-        },
-        { status: 400 }
-      );
-    }
-
-    if (
-      !storagePath.startsWith(
-        "orders/"
-      )
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "Invalid photo storage path.",
-        },
-        { status: 400 }
-      );
-    }
+    /*
+     * =====================================================
+     * SUPABASE ADMIN CLIENT
+     * =====================================================
+     */
 
     const supabase =
       getSupabaseAdmin();
 
+    /*
+     * =====================================================
+     * CUSTOMER-FACING ORDER NUMBER
+     * =====================================================
+     */
+
     const orderNumber =
-      createOrderNumber();
+      generateOrderNumber();
+
+    /*
+     * =====================================================
+     * CREATE ORDER
+     * =====================================================
+     *
+     * payment_method is explicitly "online" here because
+     * this order is created before the payment-method
+     * selection. COD will securely change it later through
+     * /api/orders/confirm-cod.
+     */
 
     const {
       data: createdOrder,
       error: orderError,
-    } =
-      await supabase
-        .from("orders")
-        .insert({
-          order_number:
-            orderNumber,
+    } = await supabase
+      .from("orders")
+      .insert({
+        order_number:
+          orderNumber,
 
-          status:
-            "pending",
+        status:
+          "pending",
 
-          payment_status:
-            "pending",
+        payment_status:
+          "pending",
 
-          customer_name:
-            customerName,
+        payment_method:
+          "online",
 
-          customer_mobile:
-            customerMobile,
+        customer_name:
+          fullName,
 
-          customer_email:
-            customerEmail || null,
+        customer_mobile:
+          mobile,
 
-          address,
+        customer_email:
+          email || null,
 
-          city,
+        address,
 
-          state,
+        city,
 
-          pin_code:
-            pinCode,
+        state,
 
-          product_name:
-            "Personalized Lithophane",
+        pin_code:
+          pincode,
 
-          size,
+        product_name:
+          "Personalized Lithophane",
 
-          frame,
+        size,
 
-          lithophane,
+        frame,
 
-          quantity,
+        lithophane,
 
-          unit_price:
-            unitPrice,
+        quantity,
 
-          subtotal,
+        unit_price:
+          unitPrice,
 
-          discount,
+        subtotal,
 
-          total,
-        })
-        .select(
-          "id, order_number, status, payment_status"
-        )
-        .single();
+        discount,
 
-    if (orderError) {
+        total,
+      })
+      .select(
+        "id,order_number,status,payment_status,payment_method"
+      )
+      .single();
+
+    if (
+      orderError ||
+      !createdOrder
+    ) {
       console.error(
         "Supabase order creation error:",
         orderError
@@ -402,48 +534,73 @@ export async function POST(
       );
     }
 
-    const {
-      data: createdPhoto,
-      error: photoError,
-    } =
-      await supabase
-        .from("order_photos")
-        .insert({
+    /*
+     * =====================================================
+     * CREATE ONE ORDER_PHOTOS ROW PER PHOTO
+     * =====================================================
+     */
+
+    const photoRows =
+      photos.map(
+        (
+          photo,
+          index
+        ) => ({
           order_id:
             createdOrder.id,
 
           photo_index:
-            1,
+            index + 1,
 
           storage_path:
-            storagePath,
+            cleanText(
+              photo.storagePath
+            ),
 
           original_name:
-            String(
-              photo?.originalName ||
-                ""
-            ),
+            cleanText(
+              photo.originalName
+            ) || null,
 
           mime_type:
-            String(
-              photo?.mimeType ||
-                ""
-            ),
+            cleanText(
+              photo.mimeType
+            ) || null,
 
           file_size:
             Number(
-              photo?.fileSize || 0
+              photo.fileSize
             ),
         })
-        .select(
-          "id, order_id, photo_index, storage_path"
-        )
-        .single();
+      );
 
-    if (photoError) {
+    const {
+      data: createdPhotos,
+      error: photosError,
+    } = await supabase
+      .from("order_photos")
+      .insert(
+        photoRows
+      )
+      .select(
+        "id,photo_index,storage_path,original_name,mime_type,file_size"
+      );
+
+    /*
+     * =====================================================
+     * ROLLBACK ORDER IF PHOTO INSERT FAILS
+     * =====================================================
+     */
+
+    if (
+      photosError ||
+      !createdPhotos ||
+      createdPhotos.length !==
+        quantity
+    ) {
       console.error(
-        "Supabase order photo creation error:",
-        photoError
+        "Supabase order_photos creation error:",
+        photosError
       );
 
       await supabase
@@ -458,49 +615,99 @@ export async function POST(
         {
           success: false,
           error:
-            "Unable to link your uploaded photo to the order.",
+            "Unable to attach all customer photos to the order. The order was not created.",
         },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({
-      success: true,
+    /*
+     * =====================================================
+     * SORT PHOTO RESPONSE BY PHOTO INDEX
+     * =====================================================
+     */
 
-      orderId:
-        createdOrder.id,
+    const sortedPhotos =
+      [...createdPhotos].sort(
+        (a, b) =>
+          Number(
+            a.photo_index
+          ) -
+          Number(
+            b.photo_index
+          )
+      );
 
-      orderNumber:
-        createdOrder.order_number,
+    /*
+     * =====================================================
+     * RESPONSE
+     * =====================================================
+     *
+     * Keep photoId/photoStoragePath for compatibility with
+     * the existing payment flow while also returning the
+     * complete photos array.
+     */
 
-      status:
-        createdOrder.status,
+    return NextResponse.json(
+      {
+        success: true,
 
-      paymentStatus:
-        createdOrder.payment_status,
+        orderId:
+          createdOrder.id,
 
-      photoId:
-        createdPhoto.id,
+        orderNumber:
+          createdOrder.order_number,
 
-      photoStoragePath:
-        createdPhoto.storage_path,
+        status:
+          createdOrder.status,
 
-      size,
+        paymentStatus:
+          createdOrder.payment_status,
 
-      frame,
+        paymentMethod:
+          createdOrder.payment_method,
 
-      lithophane,
+        photoId:
+          sortedPhotos[0]?.id ||
+          null,
 
-      quantity,
+        photoStoragePath:
+          sortedPhotos[0]
+            ?.storage_path ||
+          null,
 
-      unitPrice,
+        photos:
+          sortedPhotos.map(
+            (photo) => ({
+              id:
+                photo.id,
 
-      subtotal,
+              photoIndex:
+                photo.photo_index,
 
-      discount,
+              storagePath:
+                photo.storage_path,
 
-      total,
-    });
+              originalName:
+                photo.original_name,
+
+              mimeType:
+                photo.mime_type,
+
+              fileSize:
+                photo.file_size,
+            })
+          ),
+
+        pricing: {
+          unitPrice,
+          subtotal,
+          discount,
+          total,
+        },
+      },
+      { status: 200 }
+    );
   } catch (error) {
     console.error(
       "Create order API error:",
