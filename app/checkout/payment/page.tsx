@@ -46,6 +46,7 @@ type RazorpayResponse = {
 
 type FinalOrder = {
   orderId: string;
+  databaseOrderId?: string;
   status: string;
 
   customer: {
@@ -69,7 +70,17 @@ type FinalOrder = {
     total: number;
   };
 
-  photo: string;
+  photo?: string;
+
+  photos?: Array<{
+    id?: string;
+    storagePath?: string;
+    originalName?: string;
+    mimeType?: string;
+    fileSize?: number;
+    preview?: string;
+  }>;
+
   createdAt: string;
 };
 
@@ -96,9 +107,26 @@ type VerifyResponse = {
   error?: string;
 };
 
+type CodResponse = {
+  success?: boolean;
+  message?: string;
+  orderId?: string;
+  orderNumber?: string;
+  databaseOrderId?: string;
+  status?: string;
+  paymentStatus?: string;
+  paymentMethod?: string;
+  error?: string;
+};
+
+type PaymentMethod = "online" | "cod";
+
 export default function PaymentPage() {
   const [order, setOrder] =
     useState<FinalOrder | null>(null);
+
+  const [paymentMethod, setPaymentMethod] =
+    useState<PaymentMethod>("online");
 
   const [loading, setLoading] =
     useState(false);
@@ -111,17 +139,83 @@ export default function PaymentPage() {
 
   /*
    * ---------------------------------------------------------
-   * LOAD RAZORPAY
+   * LOAD ORDER
    * ---------------------------------------------------------
    */
   useEffect(() => {
+    try {
+      const saved =
+        localStorage.getItem(
+          "rmx_final_order"
+        );
+
+      if (!saved) {
+        setError(
+          "Order information is unavailable. Please return to review."
+        );
+        return;
+      }
+
+      const parsed =
+        JSON.parse(saved) as FinalOrder;
+
+      if (!parsed?.orderId) {
+        setError(
+          "Order information is incomplete. Please return to review."
+        );
+        return;
+      }
+
+      setOrder(parsed);
+
+      /*
+       * Restore previously selected payment
+       * method if one exists.
+       */
+      const savedPaymentMethod =
+        localStorage.getItem(
+          "rmx_payment_method"
+        );
+
+      if (
+        savedPaymentMethod === "cod" ||
+        savedPaymentMethod === "online"
+      ) {
+        setPaymentMethod(
+          savedPaymentMethod
+        );
+      }
+    } catch (loadError) {
+      console.error(
+        "Unable to load payment information:",
+        loadError
+      );
+
+      setError(
+        "Unable to load your order information."
+      );
+    }
+  }, []);
+
+  /*
+   * ---------------------------------------------------------
+   * LOAD RAZORPAY ONLY WHEN ONLINE PAYMENT IS SELECTED
+   * ---------------------------------------------------------
+   */
+  useEffect(() => {
+    if (
+      paymentMethod !== "online" ||
+      !order
+    ) {
+      return;
+    }
+
     let cancelled = false;
 
     const loadRazorpay = async () => {
       try {
         /*
-         * If Razorpay is already loaded,
-         * use the existing instance.
+         * Already available.
          */
         if (window.Razorpay) {
           if (!cancelled) {
@@ -132,8 +226,7 @@ export default function PaymentPage() {
         }
 
         /*
-         * Check whether another script is
-         * already being loaded.
+         * Check for an existing Razorpay script.
          */
         const existingScript =
           document.querySelector(
@@ -144,16 +237,20 @@ export default function PaymentPage() {
           await waitForRazorpay();
 
           if (!cancelled) {
-            setRazorpayLoaded(
-              !!window.Razorpay
-            );
+            if (window.Razorpay) {
+              setRazorpayLoaded(true);
+            } else {
+              setError(
+                "Razorpay Checkout could not be loaded."
+              );
+            }
           }
 
           return;
         }
 
         /*
-         * Create Razorpay script manually.
+         * Create Razorpay script.
          */
         const script =
           document.createElement(
@@ -186,10 +283,6 @@ export default function PaymentPage() {
           script
         );
 
-        /*
-         * Safety check in case onload
-         * fires before React state updates.
-         */
         await waitForRazorpay();
 
         if (!cancelled) {
@@ -220,121 +313,269 @@ export default function PaymentPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [
+    paymentMethod,
+    order,
+  ]);
 
   /*
    * ---------------------------------------------------------
-   * LOAD ORDER
+   * SELECT PAYMENT METHOD
    * ---------------------------------------------------------
    */
-  useEffect(() => {
-    try {
-      const saved =
-        localStorage.getItem(
-          "rmx_final_order"
-        );
-
-      if (!saved) {
-        return;
-      }
-
-      const parsed =
-        JSON.parse(saved);
-
-      setOrder(parsed);
-    } catch (loadError) {
-      console.error(
-        "Unable to load payment information:",
-        loadError
-      );
-
-      setError(
-        "Unable to load your order information."
-      );
+  const changePaymentMethod = (
+    method: PaymentMethod
+  ) => {
+    if (loading) {
+      return;
     }
-  }, []);
 
-  /*
-   * ---------------------------------------------------------
-   * BACK
-   * ---------------------------------------------------------
-   */
-  const handleBack = () => {
-    window.location.href =
-      "/checkout/review";
+    setError("");
+    setPaymentMethod(method);
+
+    localStorage.setItem(
+      "rmx_payment_method",
+      method
+    );
   };
 
   /*
    * ---------------------------------------------------------
-   * PAYMENT
+   * MAIN PAYMENT HANDLER
    * ---------------------------------------------------------
    */
   const handlePayment = async () => {
-    if (!order) {
-      setError(
-        "Order information is unavailable. Please return to review."
-      );
-
-      return;
-    }
-
     if (loading) {
       return;
     }
 
     setError("");
 
-    /*
-     * Make absolutely sure Razorpay exists.
-     */
-    if (
-      !razorpayLoaded ||
-      !window.Razorpay
-    ) {
+    if (!order) {
       setError(
-        "Razorpay is still loading. Please wait a moment and try again."
+        "Order information is unavailable. Please return to review."
       );
-
       return;
     }
 
-    /*
-     * The customer-facing RMX order number
-     * was created by /api/orders/create and
-     * stored as order.orderId.
-     *
-     * IMPORTANT:
-     * We now send this order number to the
-     * server instead of sending size/quantity.
-     *
-     * The server will:
-     * 1. Find the existing Supabase order.
-     * 2. Read the trusted price from Supabase.
-     * 3. Create the Razorpay order.
-     * 4. Save razorpay_order_id back to Supabase.
-     */
     if (!order.orderId) {
       setError(
-        "RMX order number is missing. Please return to review and try again."
+        "Order number is missing. Please return to review."
       );
+      return;
+    }
+
+    if (
+      !order.databaseOrderId
+    ) {
+      setError(
+        "Database order reference is missing. Please return to review."
+      );
+      return;
+    }
+
+    if (
+      !order.order ||
+      !order.order.total ||
+      order.order.total <= 0
+    ) {
+      setError(
+        "Invalid order amount."
+      );
+      return;
+    }
+
+    /*
+     * -------------------------------------------------------
+     * CASH ON DELIVERY
+     * -------------------------------------------------------
+     */
+    if (
+      paymentMethod === "cod"
+    ) {
+      setLoading(true);
+
+      try {
+        const response =
+          await fetch(
+            "/api/orders/confirm-cod",
+            {
+              method: "POST",
+
+              headers: {
+                "Content-Type":
+                  "application/json",
+              },
+
+              body: JSON.stringify({
+                databaseOrderId:
+                  order.databaseOrderId,
+
+                orderNumber:
+                  order.orderId,
+              }),
+            }
+          );
+
+        let data: CodResponse;
+
+        try {
+          data =
+            (await response.json()) as CodResponse;
+        } catch {
+          throw new Error(
+            "COD confirmation server returned an invalid response."
+          );
+        }
+
+        console.log(
+          "COD confirmation response:",
+          data
+        );
+
+        if (
+          !response.ok ||
+          !data.success
+        ) {
+          throw new Error(
+            data?.error ||
+              "Unable to confirm Cash on Delivery order."
+          );
+        }
+
+        /*
+         * Server has confirmed the COD order.
+         *
+         * COD does NOT mark payment as paid.
+         *
+         * Expected database state:
+         *
+         * payment_method = cod
+         * status = pending
+         * payment_status = pending
+         */
+        const updatedOrder = {
+          ...order,
+
+          status:
+            data.status ||
+            "pending",
+
+          paymentStatus:
+            data.paymentStatus ||
+            "pending",
+
+          paymentMethod:
+            "cod",
+
+          databaseOrderId:
+            data.databaseOrderId ||
+            order.databaseOrderId,
+
+          orderId:
+            data.orderNumber ||
+            order.orderId,
+
+          codConfirmedAt:
+            new Date().toISOString(),
+        };
+
+        localStorage.setItem(
+          "rmx_final_order",
+          JSON.stringify(
+            updatedOrder
+          )
+        );
+
+        localStorage.setItem(
+          "rmx_payment_method",
+          "cod"
+        );
+
+        localStorage.setItem(
+          "rmx_payment_status",
+          "pending"
+        );
+
+        if (
+          data.orderNumber ||
+          order.orderId
+        ) {
+          localStorage.setItem(
+            "rmx_order_id",
+            data.orderNumber ||
+              order.orderId
+          );
+        }
+
+        if (
+          data.databaseOrderId ||
+          order.databaseOrderId
+        ) {
+          localStorage.setItem(
+            "rmx_database_order_id",
+            data.databaseOrderId ||
+              order.databaseOrderId
+          );
+        }
+
+        /*
+         * Go directly to success page.
+         *
+         * Razorpay is NOT opened.
+         */
+        window.location.href =
+          "/checkout/success";
+      } catch (codError) {
+        console.error(
+          "COD confirmation error:",
+          codError
+        );
+
+        setLoading(false);
+
+        setError(
+          codError instanceof Error
+            ? codError.message
+            : "Unable to confirm Cash on Delivery order."
+        );
+      }
 
       return;
     }
+
+    /*
+     * -------------------------------------------------------
+     * ONLINE PAYMENT
+     * -------------------------------------------------------
+     */
 
     setLoading(true);
 
     try {
       /*
-       * -----------------------------------------------------
-       * CREATE RAZORPAY ORDER
-       * -----------------------------------------------------
-       *
-       * IMPORTANT:
-       * Do NOT send size and quantity here.
-       *
-       * The backend now uses the already-created
-       * Supabase order as the source of truth.
+       * Make absolutely sure Razorpay
+       * exists before starting.
        */
+      if (!window.Razorpay) {
+        await waitForRazorpay();
+      }
+
+      if (!window.Razorpay) {
+        throw new Error(
+          "Razorpay Checkout is not available in the browser."
+        );
+      }
+
+      /*
+       * Create or retrieve the Razorpay
+       * order from our secure server.
+       */
+      console.log(
+        "Creating Razorpay order for RMX order:",
+        order.orderId
+      );
+
       const response =
         await fetch(
           "/api/razorpay/create-order",
@@ -360,7 +601,7 @@ export default function PaymentPage() {
           (await response.json()) as CreateOrderResponse;
       } catch {
         throw new Error(
-          "The payment server returned an invalid response."
+          "Razorpay order server returned an invalid response."
         );
       }
 
@@ -369,21 +610,13 @@ export default function PaymentPage() {
         data
       );
 
-      if (!response.ok) {
+      if (
+        !response.ok ||
+        !data.success
+      ) {
         throw new Error(
           data?.error ||
             "Unable to create Razorpay order."
-        );
-      }
-
-      /*
-       * Validate everything returned
-       * by our backend BEFORE opening
-       * Razorpay.
-       */
-      if (!data.keyId) {
-        throw new Error(
-          "Razorpay Key ID was not returned by the server."
         );
       }
 
@@ -414,13 +647,6 @@ export default function PaymentPage() {
         );
       }
 
-      /*
-       * Log the amount in rupees for debugging.
-       *
-       * Razorpay amount is in paise.
-       *
-       * ₹1 = 100 paise.
-       */
       console.log(
         "Razorpay amount:",
         data.amount,
@@ -434,14 +660,17 @@ export default function PaymentPage() {
        * -----------------------------------------------------
        */
       const options: RazorpayOptions = {
-        key: data.keyId,
+        key:
+          data.keyId || "",
 
-        amount: data.amount,
+        amount:
+          data.amount,
 
         currency:
           data.currency,
 
-        name: "RMX Nexus",
+        name:
+          "RMX Nexus",
 
         description:
           "Personalized Lithophane Lamp",
@@ -451,8 +680,7 @@ export default function PaymentPage() {
 
         prefill: {
           name:
-            order.customer
-              .fullName,
+            order.customer.fullName,
 
           email:
             order.customer.email,
@@ -496,18 +724,6 @@ export default function PaymentPage() {
 
               /*
                * Verify payment on our server.
-               *
-               * The server will:
-               * 1. Find the Supabase order using
-               *    razorpay_order_id.
-               * 2. Verify the Razorpay signature.
-               * 3. Fetch the payment from Razorpay.
-               * 4. Confirm amount/currency/order.
-               * 5. Confirm payment is captured.
-               * 6. Update Supabase:
-               *      status = confirmed
-               *      payment_status = paid
-               *      razorpay_payment_id = pay_...
                */
               const verifyResponse =
                 await fetch(
@@ -554,11 +770,9 @@ export default function PaymentPage() {
               }
 
               /*
-               * Server has now confirmed the payment
-               * and updated the database.
-               *
-               * Keep the localStorage state synchronized
-               * with the confirmed server result.
+               * Server has now confirmed
+               * the payment and updated
+               * the database.
                */
               const updatedOrder = {
                 ...order,
@@ -568,6 +782,9 @@ export default function PaymentPage() {
 
                 paymentStatus:
                   "paid",
+
+                paymentMethod:
+                  "online",
 
                 razorpay: {
                   paymentId:
@@ -581,7 +798,8 @@ export default function PaymentPage() {
                 },
 
                 databaseOrderId:
-                  verifyData.databaseOrderId,
+                  verifyData.databaseOrderId ||
+                  order.databaseOrderId,
 
                 paidAt:
                   new Date().toISOString(),
@@ -595,6 +813,11 @@ export default function PaymentPage() {
               );
 
               localStorage.setItem(
+                "rmx_payment_method",
+                "online"
+              );
+
+              localStorage.setItem(
                 "rmx_payment_status",
                 "success"
               );
@@ -605,7 +828,7 @@ export default function PaymentPage() {
               );
 
               /*
-               * Keep the customer-facing
+               * Keep customer-facing
                * RMX order number available.
                */
               if (
@@ -620,15 +843,17 @@ export default function PaymentPage() {
               }
 
               /*
-               * Keep the database UUID available
-               * when returned by the backend.
+               * Keep database UUID available.
                */
               if (
-                verifyData.databaseOrderId
+                verifyData.databaseOrderId ||
+                order.databaseOrderId
               ) {
                 localStorage.setItem(
                   "rmx_database_order_id",
-                  verifyData.databaseOrderId
+                  verifyData.databaseOrderId ||
+                    order.databaseOrderId ||
+                    ""
                 );
               }
 
@@ -696,15 +921,6 @@ export default function PaymentPage() {
         );
 
       razorpay.open();
-
-      /*
-       * Razorpay.open() does not return
-       * a Promise, so don't wait for it.
-       *
-       * The loading state remains active
-       * until Razorpay closes or payment
-       * verification finishes.
-       */
     } catch (paymentError) {
       console.error(
         "Payment initiation error:",
@@ -739,6 +955,9 @@ export default function PaymentPage() {
           color:
             "#fff",
 
+          fontFamily:
+            "Arial, Helvetica, sans-serif",
+
           display:
             "flex",
 
@@ -748,29 +967,74 @@ export default function PaymentPage() {
           justifyContent:
             "center",
 
-          fontFamily:
-            "Arial, Helvetica, sans-serif",
+          padding:
+            "30px 20px",
         }}
       >
         <div
           style={{
+            width:
+              "100%",
+
+            maxWidth:
+              "560px",
+
             textAlign:
               "center",
-
-            padding:
-              "30px",
           }}
         >
+          <div
+            style={{
+              width:
+                "64px",
+
+              height:
+                "64px",
+
+              borderRadius:
+                "50%",
+
+              border:
+                "1px solid rgba(34,211,238,.35)",
+
+              background:
+                "rgba(34,211,238,.08)",
+
+              color:
+                "#22d3ee",
+
+              display:
+                "flex",
+
+              alignItems:
+                "center",
+
+              justifyContent:
+                "center",
+
+              margin:
+                "0 auto 20px",
+
+              fontSize:
+                "28px",
+            }}
+          >
+            !
+          </div>
+
           <h1
             style={{
               fontSize:
-                "28px",
+                "32px",
 
-              marginBottom:
-                "10px",
+              margin:
+                "0 0 12px",
+
+              fontWeight:
+                800,
             }}
           >
-            Order information unavailable
+            Payment
           </h1>
 
           <p
@@ -779,22 +1043,25 @@ export default function PaymentPage() {
                 "#888",
 
               fontSize:
-                "13px",
+                "14px",
 
-              marginBottom:
-                "20px",
+              lineHeight:
+                1.6,
+
+              margin:
+                "0 0 24px",
             }}
           >
-            Please return to the
-            order review page and
-            try again.
+            {error ||
+              "Loading your order information..."}
           </p>
 
           <button
             type="button"
-            onClick={
-              handleBack
-            }
+            onClick={() => {
+              window.location.href =
+                "/checkout/review";
+            }}
             style={{
               border:
                 "none",
@@ -809,10 +1076,13 @@ export default function PaymentPage() {
                 "#000",
 
               padding:
-                "13px 20px",
+                "13px 22px",
 
               fontWeight:
                 800,
+
+              fontSize:
+                "12px",
 
               cursor:
                 "pointer",
@@ -825,8 +1095,19 @@ export default function PaymentPage() {
     );
   }
 
+  /*
+   * ---------------------------------------------------------
+   * PAYMENT PAGE
+   * ---------------------------------------------------------
+   */
   const total =
-    order.order.total;
+    order.order.total || 0;
+
+  const quantity =
+    order.order.quantity || 1;
+
+  const onlineReady =
+    razorpayLoaded;
 
   return (
     <main
@@ -840,11 +1121,11 @@ export default function PaymentPage() {
         color:
           "#fff",
 
-        padding:
-          "32px 20px 70px",
-
         fontFamily:
           "Arial, Helvetica, sans-serif",
+
+        padding:
+          "30px 20px 60px",
       }}
     >
       <div
@@ -861,30 +1142,35 @@ export default function PaymentPage() {
       >
         <button
           type="button"
-          onClick={
-            handleBack
-          }
+          onClick={() => {
+            if (!loading) {
+              window.location.href =
+                "/checkout/review";
+            }
+          }}
           style={{
-            background:
-              "transparent",
-
             border:
               "none",
 
+            background:
+              "transparent",
+
             color:
-              "#888",
+              "#777",
 
             fontSize:
-              "12px",
+              "11px",
+
+            cursor:
+              loading
+                ? "default"
+                : "pointer",
 
             padding:
-              0,
+              "0",
 
             marginBottom:
               "20px",
-
-            cursor:
-              "pointer",
           }}
         >
           ← Back to order review
@@ -908,10 +1194,10 @@ export default function PaymentPage() {
               "999px",
 
             padding:
-              "6px 11px",
+              "7px 12px",
 
             fontSize:
-              "10px",
+              "9px",
 
             fontWeight:
               700,
@@ -920,82 +1206,54 @@ export default function PaymentPage() {
               "1px",
 
             marginBottom:
-              "12px",
+              "16px",
           }}
         >
-          🔒 SECURE PAYMENT
+          SECURE CHECKOUT
         </div>
 
         <h1
           style={{
             fontSize:
-              "clamp(32px, 5vw, 52px)",
+              "clamp(34px, 6vw, 54px)",
 
             lineHeight:
               1,
 
             margin:
-              "0 0 10px",
+              "0 0 12px",
 
             fontWeight:
               800,
 
             letterSpacing:
-              "-1.5px",
+              "-2px",
           }}
         >
-          Complete Your Payment
+          Choose Your Payment
         </h1>
 
         <p
           style={{
             color:
-              "#8b8b8b",
+              "#888",
 
             fontSize:
               "13px",
 
+            lineHeight:
+              1.6,
+
             margin:
               "0 0 30px",
+
+            maxWidth:
+              "560px",
           }}
         >
-          Your personalized RMX
-          Nexus order is ready.
-          Complete payment to
-          confirm your order.
+          Select how you would like to pay for your personalized RMX Nexus
+          order.
         </p>
-
-        {error && (
-          <div
-            style={{
-              marginBottom:
-                "20px",
-
-              border:
-                "1px solid rgba(248,113,113,.3)",
-
-              background:
-                "rgba(248,113,113,.08)",
-
-              color:
-                "#fca5a5",
-
-              borderRadius:
-                "12px",
-
-              padding:
-                "14px",
-
-              fontSize:
-                "12px",
-
-              lineHeight:
-                1.5,
-            }}
-          >
-            {error}
-          </div>
-        )}
 
         <div
           style={{
@@ -1003,10 +1261,13 @@ export default function PaymentPage() {
               "grid",
 
             gridTemplateColumns:
-              "1fr 300px",
+              "minmax(0, 1fr) 300px",
 
             gap:
-              "20px",
+              "18px",
+
+            alignItems:
+              "start",
           }}
         >
           <section
@@ -1015,7 +1276,7 @@ export default function PaymentPage() {
                 "#080808",
 
               border:
-                "1px solid #242424",
+                "1px solid #202020",
 
               borderRadius:
                 "16px",
@@ -1024,327 +1285,454 @@ export default function PaymentPage() {
                 "20px",
             }}
           >
-            <h2
+            <div
               style={{
-                fontSize:
-                  "17px",
+                color:
+                  "#999",
 
-                margin:
-                  "0 0 18px",
+                fontSize:
+                  "9px",
+
+                fontWeight:
+                  700,
+
+                letterSpacing:
+                  "1px",
+
+                marginBottom:
+                  "12px",
               }}
             >
-              Payment methods
-            </h2>
+              PAYMENT METHOD
+            </div>
 
             <div
               style={{
-                border:
-                  "1px solid rgba(34,211,238,.35)",
+                display:
+                  "grid",
 
-                background:
-                  "rgba(34,211,238,.04)",
-
-                borderRadius:
+                gap:
                   "12px",
-
-                padding:
-                  "16px",
               }}
             >
-              <div
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() =>
+                  changePaymentMethod(
+                    "online"
+                  )
+                }
                 style={{
-                  fontSize:
+                  width:
+                    "100%",
+
+                  textAlign:
+                    "left",
+
+                  border:
+                    paymentMethod ===
+                    "online"
+                      ? "1px solid #22d3ee"
+                      : "1px solid #242424",
+
+                  background:
+                    paymentMethod ===
+                    "online"
+                      ? "rgba(34,211,238,.07)"
+                      : "#050505",
+
+                  color:
+                    "#fff",
+
+                  borderRadius:
                     "14px",
 
-                  fontWeight:
-                    700,
+                  padding:
+                    "17px",
 
-                  marginBottom:
-                    "6px",
+                  cursor:
+                    loading
+                      ? "default"
+                      : "pointer",
+
+                  opacity:
+                    loading
+                      ? 0.7
+                      : 1,
                 }}
               >
-                Online Payment
-              </div>
+                <div
+                  style={{
+                    display:
+                      "flex",
 
+                    alignItems:
+                      "center",
+
+                    gap:
+                      "12px",
+                  }}
+                >
+                  <div
+                    style={{
+                      width:
+                        "38px",
+
+                      height:
+                        "38px",
+
+                      borderRadius:
+                        "10px",
+
+                      background:
+                        "rgba(34,211,238,.1)",
+
+                      border:
+                        "1px solid rgba(34,211,238,.25)",
+
+                      display:
+                        "flex",
+
+                      alignItems:
+                        "center",
+
+                      justifyContent:
+                        "center",
+
+                      fontSize:
+                        "17px",
+                    }}
+                  >
+                    ₹
+                  </div>
+
+                  <div
+                    style={{
+                      flex:
+                        1,
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize:
+                          "14px",
+
+                        fontWeight:
+                          800,
+                      }}
+                    >
+                      Online Payment
+                    </div>
+
+                    <div
+                      style={{
+                        color:
+                          "#777",
+
+                        fontSize:
+                          "11px",
+
+                        marginTop:
+                          "4px",
+
+                        lineHeight:
+                          1.5,
+                      }}
+                    >
+                      Pay securely using Razorpay.
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      width:
+                        "18px",
+
+                      height:
+                        "18px",
+
+                      borderRadius:
+                        "50%",
+
+                      border:
+                        paymentMethod ===
+                        "online"
+                          ? "5px solid #22d3ee"
+                          : "1px solid #555",
+                    }}
+                  />
+                </div>
+              </button>
+
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() =>
+                  changePaymentMethod(
+                    "cod"
+                  )
+                }
+                style={{
+                  width:
+                    "100%",
+
+                  textAlign:
+                    "left",
+
+                  border:
+                    paymentMethod ===
+                    "cod"
+                      ? "1px solid #22d3ee"
+                      : "1px solid #242424",
+
+                  background:
+                    paymentMethod ===
+                    "cod"
+                      ? "rgba(34,211,238,.07)"
+                      : "#050505",
+
+                  color:
+                    "#fff",
+
+                  borderRadius:
+                    "14px",
+
+                  padding:
+                    "17px",
+
+                  cursor:
+                    loading
+                      ? "default"
+                      : "pointer",
+
+                  opacity:
+                    loading
+                      ? 0.7
+                      : 1,
+                }}
+              >
+                <div
+                  style={{
+                    display:
+                      "flex",
+
+                    alignItems:
+                      "center",
+
+                    gap:
+                      "12px",
+                  }}
+                >
+                  <div
+                    style={{
+                      width:
+                        "38px",
+
+                      height:
+                        "38px",
+
+                      borderRadius:
+                        "10px",
+
+                      background:
+                        "rgba(34,211,238,.1)",
+
+                      border:
+                        "1px solid rgba(34,211,238,.25)",
+
+                      display:
+                        "flex",
+
+                      alignItems:
+                        "center",
+
+                      justifyContent:
+                        "center",
+
+                      fontSize:
+                        "17px",
+                    }}
+                  >
+                    📦
+                  </div>
+
+                  <div
+                    style={{
+                      flex:
+                        1,
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize:
+                          "14px",
+
+                        fontWeight:
+                          800,
+                      }}
+                    >
+                      Cash on Delivery
+                    </div>
+
+                    <div
+                      style={{
+                        color:
+                          "#777",
+
+                        fontSize:
+                          "11px",
+
+                        marginTop:
+                          "4px",
+
+                        lineHeight:
+                          1.5,
+                      }}
+                    >
+                      Pay when your personalized order is delivered.
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      width:
+                        "18px",
+
+                      height:
+                        "18px",
+
+                      borderRadius:
+                        "50%",
+
+                      border:
+                        paymentMethod ===
+                        "cod"
+                          ? "5px solid #22d3ee"
+                          : "1px solid #555",
+                    }}
+                  />
+                </div>
+              </button>
+            </div>
+
+            {paymentMethod ===
+              "online" && (
               <div
                 style={{
+                  marginTop:
+                    "16px",
+
+                  border:
+                    "1px solid #202020",
+
+                  background:
+                    "#050505",
+
+                  borderRadius:
+                    "12px",
+
+                  padding:
+                    "14px",
+
                   color:
                     "#777",
 
                   fontSize:
-                    "12px",
+                    "11px",
 
                   lineHeight:
-                    1.5,
+                    1.6,
                 }}
               >
-                UPI, credit card,
-                debit card,
-                netbanking and
-                other supported
-                Razorpay payment
-                methods.
-              </div>
-            </div>
-
-            <div
-              style={{
-                marginTop:
-                  "25px",
-
-                border:
-                  "1px solid #202020",
-
-                borderRadius:
-                  "12px",
-
-                padding:
-                  "16px",
-              }}
-            >
-              <div
-                style={{
-                  color:
-                    "#555",
-
-                  fontSize:
-                    "9px",
-
-                  fontWeight:
-                    700,
-
-                  letterSpacing:
-                    "1px",
-
-                  marginBottom:
-                    "7px",
-                }}
-              >
-                ORDER ID
-              </div>
-
-              <div
-                style={{
-                  fontSize:
-                    "13px",
-
-                  fontWeight:
-                    700,
-                }}
-              >
-                {order.orderId}
-              </div>
-            </div>
-
-            <div
-              style={{
-                marginTop:
-                  "15px",
-
-                border:
-                  "1px solid #202020",
-
-                borderRadius:
-                  "12px",
-
-                padding:
-                  "16px",
-              }}
-            >
-              <div
-                style={{
-                  color:
-                    "#555",
-
-                  fontSize:
-                    "9px",
-
-                  fontWeight:
-                    700,
-
-                  letterSpacing:
-                    "1px",
-
-                  marginBottom:
-                    "7px",
-                }}
-              >
-                PAYMENT GATEWAY
-              </div>
-
-              <div
-                style={{
-                  fontSize:
-                    "13px",
-
-                  fontWeight:
-                    700,
-                }}
-              >
-                {razorpayLoaded
-                  ? "Razorpay Ready ✓"
-                  : "Loading Razorpay..."}
-              </div>
-            </div>
-          </section>
-
-          <aside
-            style={{
-              background:
-                "#080808",
-
-              border:
-                "1px solid #242424",
-
-              borderRadius:
-                "16px",
-
-              padding:
-                "20px",
-
-              height:
-                "fit-content",
-            }}
-          >
-            <h2
-              style={{
-                fontSize:
-                  "17px",
-
-                margin:
-                  "0 0 18px",
-              }}
-            >
-              Order summary
-            </h2>
-
-            <div
-              style={{
-                display:
-                  "flex",
-
-                justifyContent:
-                  "space-between",
-
-                alignItems:
-                  "flex-start",
-
-                gap:
-                  "12px",
-
-                paddingBottom:
-                  "14px",
-
-                borderBottom:
-                  "1px solid #222",
-              }}
-            >
-              <div>
-                <div
+                <strong
                   style={{
-                    fontSize:
-                      "13px",
-
-                    fontWeight:
-                      700,
-                  }}
-                >
-                  Personalized Lithophane
-                </div>
-
-                <div
-                  style={{
-                    marginTop:
-                      "5px",
-
                     color:
-                      "#666",
-
-                    fontSize:
-                      "10px",
+                      "#bbb",
                   }}
                 >
-                  {formatLabel(
-                    order.order.size
-                  )}{" "}
-                  ·{" "}
-                  {formatLabel(
-                    order.order.frame
-                  )}
-                </div>
-
-                <div
-                  style={{
-                    marginTop:
-                      "3px",
-
-                    color:
-                      "#666",
-
-                    fontSize:
-                      "10px",
-                  }}
-                >
-                  Quantity:{" "}
-                  {
-                    order.order
-                      .quantity
-                  }
-                </div>
+                  Online payment
+                </strong>
+                <br />
+                You will be redirected to the secure Razorpay checkout to
+                complete payment.
               </div>
+            )}
 
+            {paymentMethod ===
+              "cod" && (
               <div
                 style={{
-                  fontSize:
-                    "13px",
-
-                  fontWeight:
-                    700,
-                }}
-              >
-                ₹
-                {total.toLocaleString(
-                  "en-IN"
-                )}
-              </div>
-            </div>
-
-            <div
-              style={{
-                display:
-                  "flex",
-
-                justifyContent:
-                  "space-between",
-
-                alignItems:
-                  "center",
-
-                marginTop:
-                  "18px",
-              }}
-            >
-              <strong
-                style={{
-                  fontSize:
+                  marginTop:
                     "16px",
-                }}
-              >
-                Total
-              </strong>
 
-              <strong
-                style={{
+                  border:
+                    "1px solid rgba(34,211,238,.18)",
+
+                  background:
+                    "rgba(34,211,238,.04)",
+
+                  borderRadius:
+                    "12px",
+
+                  padding:
+                    "14px",
+
+                  color:
+                    "#888",
+
                   fontSize:
-                    "24px",
+                    "11px",
+
+                  lineHeight:
+                    1.6,
                 }}
               >
-                ₹
-                {total.toLocaleString(
-                  "en-IN"
-                )}
-              </strong>
-            </div>
+                <strong
+                  style={{
+                    color:
+                      "#22d3ee",
+                  }}
+                >
+                  Cash on Delivery
+                </strong>
+                <br />
+                Your order will be confirmed now. Payment will remain pending
+                until the amount is collected on delivery.
+              </div>
+            )}
+
+            {error && (
+              <div
+                style={{
+                  marginTop:
+                    "16px",
+
+                  border:
+                    "1px solid rgba(248,113,113,.25)",
+
+                  background:
+                    "rgba(248,113,113,.06)",
+
+                  color:
+                    "#fca5a5",
+
+                  borderRadius:
+                    "12px",
+
+                  padding:
+                    "13px 14px",
+
+                  fontSize:
+                    "11px",
+
+                  lineHeight:
+                    1.6,
+                }}
+              >
+                {error}
+              </div>
+            )}
 
             <button
               type="button"
@@ -1353,35 +1741,33 @@ export default function PaymentPage() {
               }
               disabled={
                 loading ||
-                !razorpayLoaded
+                !order
               }
               style={{
                 width:
                   "100%",
 
                 marginTop:
-                  "22px",
+                  "20px",
 
                 border:
                   "none",
 
                 borderRadius:
-                  "10px",
+                  "12px",
 
                 background:
-                  loading ||
-                  !razorpayLoaded
-                    ? "#555"
+                  loading
+                    ? "#333"
                     : "#fff",
 
                 color:
-                  loading ||
-                  !razorpayLoaded
-                    ? "#aaa"
+                  loading
+                    ? "#888"
                     : "#000",
 
                 padding:
-                  "14px 18px",
+                  "15px 20px",
 
                 fontWeight:
                   800,
@@ -1391,17 +1777,21 @@ export default function PaymentPage() {
 
                 cursor:
                   loading
-                    ? "wait"
-                    : !razorpayLoaded
-                    ? "not-allowed"
+                    ? "default"
                     : "pointer",
+
+                transition:
+                  "all .2s",
               }}
             >
               {loading
-                ? "OPENING PAYMENT..."
-                : !razorpayLoaded
-                ? "LOADING RAZORPAY..."
-                : "PROCEED TO PAYMENT"}
+                ? "PROCESSING..."
+                : paymentMethod ===
+                    "cod"
+                  ? "CONFIRM CASH ON DELIVERY"
+                  : onlineReady
+                    ? "PROCEED TO ONLINE PAYMENT"
+                    : "LOADING RAZORPAY..."}
             </button>
 
             <p
@@ -1422,9 +1812,300 @@ export default function PaymentPage() {
                   "12px 0 0",
               }}
             >
-              Secure payment powered
-              by Razorpay.
+              Secure checkout • Made to order • Fast shipping
             </p>
+          </section>
+
+          <aside
+            style={{
+              background:
+                "#080808",
+
+              border:
+                "1px solid #202020",
+
+              borderRadius:
+                "16px",
+
+              padding:
+                "20px",
+
+              height:
+                "fit-content",
+            }}
+          >
+            <div
+              style={{
+                color:
+                  "#999",
+
+                fontSize:
+                  "9px",
+
+                fontWeight:
+                  700,
+
+                letterSpacing:
+                  "1px",
+
+                marginBottom:
+                  "14px",
+              }}
+            >
+              ORDER SUMMARY
+            </div>
+
+            <div
+              style={{
+                border:
+                  "1px solid #202020",
+
+                borderRadius:
+                  "12px",
+
+                background:
+                  "#050505",
+
+                padding:
+                  "14px",
+
+                marginBottom:
+                  "14px",
+              }}
+            >
+              <div
+                style={{
+                  color:
+                    "#555",
+
+                  fontSize:
+                    "8px",
+
+                  fontWeight:
+                    700,
+
+                  letterSpacing:
+                    "1px",
+
+                  marginBottom:
+                    "6px",
+                }}
+              >
+                RMX ORDER
+              </div>
+
+              <div
+                style={{
+                  color:
+                    "#ddd",
+
+                  fontSize:
+                    "11px",
+
+                  fontWeight:
+                    700,
+
+                  wordBreak:
+                    "break-word",
+                }}
+              >
+                {order.orderId}
+              </div>
+            </div>
+
+            <InfoBox
+              label="PRODUCT"
+              value="Personalized Lithophane Lamp"
+            />
+
+            <InfoBox
+              label="SIZE"
+              value={formatLabel(
+                order.order.size
+              )}
+            />
+
+            <InfoBox
+              label="QUANTITY"
+              value={String(
+                quantity
+              )}
+            />
+
+            <InfoBox
+              label="PAYMENT"
+              value={
+                paymentMethod ===
+                "cod"
+                  ? "Cash on Delivery"
+                  : "Online Payment"
+              }
+            />
+
+            <div
+              style={{
+                borderTop:
+                  "1px solid #202020",
+
+                marginTop:
+                  "16px",
+
+                paddingTop:
+                  "16px",
+              }}
+            >
+              <div
+                style={{
+                  display:
+                    "flex",
+
+                  justifyContent:
+                    "space-between",
+
+                  color:
+                    "#777",
+
+                  fontSize:
+                    "11px",
+
+                  marginBottom:
+                    "8px",
+                }}
+              >
+                <span>
+                  Subtotal
+                </span>
+
+                <span>
+                  ₹{(
+                    order.order.subtotal ??
+                    total
+                  ).toLocaleString(
+                    "en-IN"
+                  )}
+                </span>
+              </div>
+
+              {(order.order.discount ??
+                0) >
+                0 && (
+                <div
+                  style={{
+                    display:
+                      "flex",
+
+                    justifyContent:
+                      "space-between",
+
+                    color:
+                      "#34d399",
+
+                    fontSize:
+                      "11px",
+
+                    marginBottom:
+                      "8px",
+                  }}
+                >
+                  <span>
+                    Discount
+                  </span>
+
+                  <span>
+                    -₹{(
+                      order.order.discount ??
+                      0
+                    ).toLocaleString(
+                      "en-IN"
+                    )}
+                  </span>
+                </div>
+              )}
+
+              <div
+                style={{
+                  display:
+                    "flex",
+
+                  justifyContent:
+                    "space-between",
+
+                  alignItems:
+                    "center",
+
+                  marginTop:
+                    "12px",
+                }}
+              >
+                <span
+                  style={{
+                    color:
+                      "#fff",
+
+                    fontSize:
+                      "13px",
+
+                    fontWeight:
+                      800,
+                  }}
+                >
+                  {paymentMethod ===
+                  "cod"
+                    ? "Amount Due"
+                    : "Total"}
+                </span>
+
+                <span
+                  style={{
+                    color:
+                      "#fff",
+
+                    fontSize:
+                      "21px",
+
+                    fontWeight:
+                      900,
+                  }}
+                >
+                  ₹{total.toLocaleString(
+                    "en-IN"
+                  )}
+                </span>
+              </div>
+            </div>
+
+            <div
+              style={{
+                marginTop:
+                  "16px",
+
+                border:
+                  "1px solid #202020",
+
+                borderRadius:
+                  "10px",
+
+                padding:
+                  "11px 12px",
+
+                background:
+                  "#050505",
+
+                color:
+                  "#666",
+
+                fontSize:
+                  "10px",
+
+                lineHeight:
+                  1.5,
+              }}
+            >
+              {paymentMethod ===
+              "cod"
+                ? "Payment will be collected when your order is delivered."
+                : "Your payment is processed securely through Razorpay."}
+            </div>
           </aside>
         </div>
       </div>
@@ -1503,4 +2184,77 @@ function formatLabel(
       (letter) =>
         letter.toUpperCase()
     );
+}
+
+/*
+ * -----------------------------------------------------------
+ * INFO BOX
+ * -----------------------------------------------------------
+ */
+function InfoBox({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div
+      style={{
+        border:
+          "1px solid #202020",
+
+        borderRadius:
+          "10px",
+
+        padding:
+          "10px 12px",
+
+        background:
+          "#050505",
+
+        marginBottom:
+          "8px",
+      }}
+    >
+      <div
+        style={{
+          color:
+            "#555",
+
+          fontSize:
+            "8px",
+
+          fontWeight:
+            700,
+
+          letterSpacing:
+            "1px",
+
+          marginBottom:
+            "5px",
+        }}
+      >
+        {label}
+      </div>
+
+      <div
+        style={{
+          color:
+            "#ddd",
+
+          fontSize:
+            "11px",
+
+          lineHeight:
+            1.4,
+
+          wordBreak:
+            "break-word",
+        }}
+      >
+        {value}
+      </div>
+    </div>
+  );
 }
