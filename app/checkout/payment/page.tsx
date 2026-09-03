@@ -79,6 +79,20 @@ type CreateOrderResponse = {
   amount?: number;
   currency?: string;
   orderId?: string;
+  orderNumber?: string;
+  databaseOrderId?: string;
+  error?: string;
+};
+
+type VerifyResponse = {
+  success?: boolean;
+  message?: string;
+  paymentId?: string;
+  orderId?: string;
+  databaseOrderId?: string;
+  orderNumber?: string;
+  status?: string;
+  paymentStatus?: string;
   error?: string;
 };
 
@@ -284,6 +298,29 @@ export default function PaymentPage() {
       return;
     }
 
+    /*
+     * The customer-facing RMX order number
+     * was created by /api/orders/create and
+     * stored as order.orderId.
+     *
+     * IMPORTANT:
+     * We now send this order number to the
+     * server instead of sending size/quantity.
+     *
+     * The server will:
+     * 1. Find the existing Supabase order.
+     * 2. Read the trusted price from Supabase.
+     * 3. Create the Razorpay order.
+     * 4. Save razorpay_order_id back to Supabase.
+     */
+    if (!order.orderId) {
+      setError(
+        "RMX order number is missing. Please return to review and try again."
+      );
+
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -291,6 +328,12 @@ export default function PaymentPage() {
        * -----------------------------------------------------
        * CREATE RAZORPAY ORDER
        * -----------------------------------------------------
+       *
+       * IMPORTANT:
+       * Do NOT send size and quantity here.
+       *
+       * The backend now uses the already-created
+       * Supabase order as the source of truth.
        */
       const response =
         await fetch(
@@ -304,17 +347,22 @@ export default function PaymentPage() {
             },
 
             body: JSON.stringify({
-              size:
-                order.order.size,
-
-              quantity:
-                order.order.quantity,
+              orderNumber:
+                order.orderId,
             }),
           }
         );
 
-      const data =
-        (await response.json()) as CreateOrderResponse;
+      let data: CreateOrderResponse;
+
+      try {
+        data =
+          (await response.json()) as CreateOrderResponse;
+      } catch {
+        throw new Error(
+          "The payment server returned an invalid response."
+        );
+      }
 
       console.log(
         "Razorpay create-order response:",
@@ -448,6 +496,18 @@ export default function PaymentPage() {
 
               /*
                * Verify payment on our server.
+               *
+               * The server will:
+               * 1. Find the Supabase order using
+               *    razorpay_order_id.
+               * 2. Verify the Razorpay signature.
+               * 3. Fetch the payment from Razorpay.
+               * 4. Confirm amount/currency/order.
+               * 5. Confirm payment is captured.
+               * 6. Update Supabase:
+               *      status = confirmed
+               *      payment_status = paid
+               *      razorpay_payment_id = pay_...
                */
               const verifyResponse =
                 await fetch(
@@ -467,8 +527,16 @@ export default function PaymentPage() {
                   }
                 );
 
-              const verifyData =
-                await verifyResponse.json();
+              let verifyData: VerifyResponse;
+
+              try {
+                verifyData =
+                  (await verifyResponse.json()) as VerifyResponse;
+              } catch {
+                throw new Error(
+                  "Payment verification server returned an invalid response."
+                );
+              }
 
               console.log(
                 "Razorpay verification response:",
@@ -486,13 +554,20 @@ export default function PaymentPage() {
               }
 
               /*
-               * Mark order as paid.
+               * Server has now confirmed the payment
+               * and updated the database.
+               *
+               * Keep the localStorage state synchronized
+               * with the confirmed server result.
                */
               const updatedOrder = {
                 ...order,
 
                 status:
                   "payment_success",
+
+                paymentStatus:
+                  "paid",
 
                 razorpay: {
                   paymentId:
@@ -504,6 +579,9 @@ export default function PaymentPage() {
                   signature:
                     paymentResponse.razorpay_signature,
                 },
+
+                databaseOrderId:
+                  verifyData.databaseOrderId,
 
                 paidAt:
                   new Date().toISOString(),
@@ -525,6 +603,34 @@ export default function PaymentPage() {
                 "rmx_razorpay_payment_id",
                 paymentResponse.razorpay_payment_id
               );
+
+              /*
+               * Keep the customer-facing
+               * RMX order number available.
+               */
+              if (
+                verifyData.orderNumber ||
+                order.orderId
+              ) {
+                localStorage.setItem(
+                  "rmx_order_id",
+                  verifyData.orderNumber ||
+                    order.orderId
+                );
+              }
+
+              /*
+               * Keep the database UUID available
+               * when returned by the backend.
+               */
+              if (
+                verifyData.databaseOrderId
+              ) {
+                localStorage.setItem(
+                  "rmx_database_order_id",
+                  verifyData.databaseOrderId
+                );
+              }
 
               /*
                * Go to success page.
@@ -595,9 +701,9 @@ export default function PaymentPage() {
        * Razorpay.open() does not return
        * a Promise, so don't wait for it.
        *
-       * Give the gateway a moment to
-       * initialize and then leave the
-       * button in its loading state.
+       * The loading state remains active
+       * until Razorpay closes or payment
+       * verification finishes.
        */
     } catch (paymentError) {
       console.error(
