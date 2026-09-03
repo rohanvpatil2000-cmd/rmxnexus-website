@@ -1,6 +1,11 @@
 "use client";
 
-import { ChangeEvent, useMemo, useState } from "react";
+import {
+  ChangeEvent,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useSearchParams } from "next/navigation";
 import {
   Check,
@@ -46,8 +51,10 @@ const frameColors = {
 } as const;
 
 type SizeId = keyof typeof sizes;
-type LithophaneId = keyof typeof lithophaneColors;
-type FrameId = keyof typeof frameColors;
+type LithophaneId =
+  keyof typeof lithophaneColors;
+type FrameId =
+  keyof typeof frameColors;
 
 type UploadedPhotoInfo = {
   storagePath: string;
@@ -56,13 +63,32 @@ type UploadedPhotoInfo = {
   fileSize: number;
 };
 
+type PhotoSlot = {
+  file: File | null;
+  previewUrl: string;
+  uploaded: UploadedPhotoInfo | null;
+};
+
+type PersistedPhoto = {
+  storagePath: string;
+  originalName: string;
+  mimeType: string;
+  fileSize: number;
+  preview: string;
+};
+
 export default function CheckoutPage() {
   const params = useSearchParams();
 
-  const rawSizeId = params.get("size") || "standard";
+  const rawSizeId =
+    params.get("size") || "standard";
+
   const rawLithophaneId =
-    params.get("lithophane") || "natural-white";
-  const rawFrameId = params.get("frame") || "black";
+    params.get("lithophane") ||
+    "natural-white";
+
+  const rawFrameId =
+    params.get("frame") || "black";
 
   const sizeId: SizeId =
     rawSizeId in sizes
@@ -80,41 +106,64 @@ export default function CheckoutPage() {
       : "black";
 
   const size = sizes[sizeId];
-  const lithophane = lithophaneColors[lithophaneId];
-  const frame = frameColors[frameId];
+  const lithophane =
+    lithophaneColors[lithophaneId];
+  const frame =
+    frameColors[frameId];
 
   const initialQuantity = Math.max(
     1,
     Math.min(
       10,
-      Number(params.get("quantity") || 1) || 1
+      Number(
+        params.get("quantity") || 1
+      ) || 1
     )
   );
 
-  const [quantity, setQuantity] =
-    useState(initialQuantity);
+  const [
+    quantity,
+    setQuantity,
+  ] = useState(
+    initialQuantity
+  );
 
-  const [photo, setPhoto] =
-    useState<File | null>(null);
+  const [
+    photos,
+    setPhotos,
+  ] = useState<PhotoSlot[]>(
+    () =>
+      Array.from(
+        {
+          length:
+            initialQuantity,
+        },
+        () => ({
+          file: null,
+          previewUrl: "",
+          uploaded: null,
+        })
+      )
+  );
 
-  const [previewUrl, setPreviewUrl] =
-    useState("");
+  const [
+    error,
+    setError,
+  ] = useState("");
 
-  const [uploadedPhoto, setUploadedPhoto] =
-    useState<UploadedPhotoInfo | null>(null);
-
-  const [error, setError] =
-    useState("");
-
-  const [isContinuing, setIsContinuing] =
-    useState(false);
+  const [
+    isContinuing,
+    setIsContinuing,
+  ] = useState(false);
 
   const subtotal =
     size.price * quantity;
 
   const discount =
     quantity >= 2
-      ? Math.round(subtotal * 0.1)
+      ? Math.round(
+          subtotal * 0.1
+        )
       : 0;
 
   const total =
@@ -125,17 +174,146 @@ export default function CheckoutPage() {
       ? "/images/lithophane/large/RMX_LARGE_16.7cm_01.jpg"
       : "/images/lithophane/standard/RMX_STANDARD_11.2cm_01.jpg";
 
-  const selectionText = useMemo(
-    () =>
-      `${size.name} • ${lithophane.name} • ${frame.name}`,
-    [
-      size.name,
-      lithophane.name,
-      frame.name,
-    ]
-  );
+  const selectionText =
+    useMemo(
+      () =>
+        `${size.name} • ${lithophane.name} • ${frame.name}`,
+      [
+        size.name,
+        lithophane.name,
+        frame.name,
+      ]
+    );
+
+  const uploadedCount =
+    photos.filter(
+      (slot) =>
+        Boolean(
+          slot.file ||
+            slot.uploaded
+        )
+    ).length;
+
+  const allPhotosReady =
+    photos.length === quantity &&
+    photos.every(
+      (slot) =>
+        Boolean(slot.file)
+    );
+
+  /*
+   * =====================================================
+   * CLEANUP OBJECT URLS
+   * =====================================================
+   */
+
+  useEffect(() => {
+    return () => {
+      photos.forEach(
+        (slot) => {
+          if (
+            slot.previewUrl
+          ) {
+            URL.revokeObjectURL(
+              slot.previewUrl
+            );
+          }
+        }
+      );
+    };
+  }, [photos]);
+
+  /*
+   * =====================================================
+   * RESIZE PHOTO SLOTS WHEN QUANTITY CHANGES
+   * =====================================================
+   *
+   * Existing selected photos are preserved.
+   * New quantity slots are added empty.
+   * Removed slots have their object URLs revoked.
+   */
+
+  const updateQuantity = (
+    nextQuantity: number
+  ) => {
+    const safeQuantity =
+      Math.max(
+        1,
+        Math.min(
+          10,
+          nextQuantity
+        )
+      );
+
+    setError("");
+
+    setPhotos(
+      (currentPhotos) => {
+        if (
+          safeQuantity <
+          currentPhotos.length
+        ) {
+          const removedPhotos =
+            currentPhotos.slice(
+              safeQuantity
+            );
+
+          removedPhotos.forEach(
+            (slot) => {
+              if (
+                slot.previewUrl
+              ) {
+                URL.revokeObjectURL(
+                  slot.previewUrl
+                );
+              }
+            }
+          );
+
+          return currentPhotos.slice(
+            0,
+            safeQuantity
+          );
+        }
+
+        if (
+          safeQuantity >
+          currentPhotos.length
+        ) {
+          return [
+            ...currentPhotos,
+            ...Array.from(
+              {
+                length:
+                  safeQuantity -
+                  currentPhotos.length,
+              },
+              () => ({
+                file: null,
+                previewUrl: "",
+                uploaded: null,
+              })
+            ),
+          ];
+        }
+
+        return currentPhotos;
+      }
+    );
+
+    setQuantity(
+      safeQuantity
+    );
+  };
+
+  /*
+   * =====================================================
+   * HANDLE INDIVIDUAL PHOTO
+   * =====================================================
+   */
 
   const handlePhoto = (
+    index: number,
     event: ChangeEvent<HTMLInputElement>
   ) => {
     const file =
@@ -146,7 +324,6 @@ export default function CheckoutPage() {
     }
 
     setError("");
-    setUploadedPhoto(null);
 
     const allowedTypes = [
       "image/jpeg",
@@ -154,9 +331,13 @@ export default function CheckoutPage() {
       "image/webp",
     ];
 
-    if (!allowedTypes.includes(file.type)) {
+    if (
+      !allowedTypes.includes(
+        file.type
+      )
+    ) {
       setError(
-        "Please upload a JPG, PNG, or WEBP image."
+        `Photo ${index + 1}: Please upload a JPG, PNG, or WEBP image.`
       );
 
       event.target.value = "";
@@ -168,37 +349,95 @@ export default function CheckoutPage() {
       10 * 1024 * 1024
     ) {
       setError(
-        "Image must be 10 MB or smaller."
+        `Photo ${index + 1}: Image must be 10 MB or smaller.`
       );
 
       event.target.value = "";
       return;
     }
 
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
-    }
+    setPhotos(
+      (currentPhotos) => {
+        const nextPhotos =
+          [...currentPhotos];
 
-    setPhoto(file);
+        const existing =
+          nextPhotos[index];
 
-    const nextPreview =
-      URL.createObjectURL(file);
+        if (
+          existing?.previewUrl
+        ) {
+          URL.revokeObjectURL(
+            existing.previewUrl
+          );
+        }
 
-    setPreviewUrl(nextPreview);
+        nextPhotos[index] = {
+          file,
+          previewUrl:
+            URL.createObjectURL(
+              file
+            ),
+          uploaded: null,
+        };
+
+        return nextPhotos;
+      }
+    );
+
+    event.target.value = "";
   };
 
-  const removePhoto = () => {
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
-    }
+  /*
+   * =====================================================
+   * REMOVE INDIVIDUAL PHOTO
+   * =====================================================
+   */
 
-    setPhoto(null);
-    setPreviewUrl("");
-    setUploadedPhoto(null);
+  const removePhoto = (
+    index: number
+  ) => {
+    setPhotos(
+      (currentPhotos) => {
+        const nextPhotos =
+          [...currentPhotos];
+
+        const existing =
+          nextPhotos[index];
+
+        if (
+          existing?.previewUrl
+        ) {
+          URL.revokeObjectURL(
+            existing.previewUrl
+          );
+        }
+
+        nextPhotos[index] = {
+          file: null,
+          previewUrl: "",
+          uploaded: null,
+        };
+
+        return nextPhotos;
+      }
+    );
+
     setError("");
   };
 
-  const fileToDataUrl = (
+  /*
+   * =====================================================
+   * FILE → SMALL THUMBNAIL DATA URL
+   * =====================================================
+   *
+   * Original files stay in private Supabase Storage.
+   * Only a small compressed preview is stored locally,
+   * preventing localStorage from being filled with
+   * multiple large 10MB images.
+   */
+
+  const createThumbnailDataUrl = (
     file: File
   ): Promise<string> => {
     return new Promise(
@@ -208,17 +447,106 @@ export default function CheckoutPage() {
 
         reader.onload = () => {
           if (
-            typeof reader.result ===
+            typeof reader.result !==
             "string"
           ) {
-            resolve(reader.result);
-          } else {
             reject(
               new Error(
                 "Unable to read image."
               )
             );
+            return;
           }
+
+          const image =
+            new Image();
+
+          image.onload = () => {
+            const maxDimension =
+              700;
+
+            const scale =
+              Math.min(
+                1,
+                maxDimension /
+                  Math.max(
+                    image.width,
+                    image.height
+                  )
+              );
+
+            const width =
+              Math.max(
+                1,
+                Math.round(
+                  image.width *
+                    scale
+                )
+              );
+
+            const height =
+              Math.max(
+                1,
+                Math.round(
+                  image.height *
+                    scale
+                )
+              );
+
+            const canvas =
+              document.createElement(
+                "canvas"
+              );
+
+            canvas.width =
+              width;
+
+            canvas.height =
+              height;
+
+            const context =
+              canvas.getContext(
+                "2d"
+              );
+
+            if (!context) {
+              reject(
+                new Error(
+                  "Unable to create image preview."
+                )
+              );
+              return;
+            }
+
+            context.drawImage(
+              image,
+              0,
+              0,
+              width,
+              height
+            );
+
+            const dataUrl =
+              canvas.toDataURL(
+                "image/jpeg",
+                0.72
+              );
+
+            resolve(
+              dataUrl
+            );
+          };
+
+          image.onerror = () => {
+            reject(
+              new Error(
+                "Unable to create image preview."
+              )
+            );
+          };
+
+          image.src =
+            reader.result;
         };
 
         reader.onerror = () => {
@@ -229,10 +557,18 @@ export default function CheckoutPage() {
           );
         };
 
-        reader.readAsDataURL(file);
+        reader.readAsDataURL(
+          file
+        );
       }
     );
   };
+
+  /*
+   * =====================================================
+   * UPLOAD ONE PHOTO TO SUPABASE
+   * =====================================================
+   */
 
   const uploadPhotoToSupabase =
     async (
@@ -289,17 +625,26 @@ export default function CheckoutPage() {
       return {
         storagePath:
           result.storagePath,
+
         originalName:
           result.originalName ||
           file.name,
+
         mimeType:
           result.mimeType ||
           file.type,
+
         fileSize:
           result.fileSize ||
           file.size,
       };
     };
+
+  /*
+   * =====================================================
+   * CONTINUE TO CUSTOMER DETAILS
+   * =====================================================
+   */
 
   const continueToCustomerDetails =
     async () => {
@@ -307,168 +652,437 @@ export default function CheckoutPage() {
         return;
       }
 
-      if (!photo) {
+      setError("");
+
+      /*
+       * Quantity must exactly match the number
+       * of selected photos.
+       */
+
+      if (
+        photos.length !==
+        quantity
+      ) {
         setError(
-          "Please upload your photo before continuing."
+          `Please select exactly ${quantity} photo${
+            quantity === 1
+              ? ""
+              : "s"
+          }.`
         );
 
         return;
       }
 
-      setError("");
-      setIsContinuing(true);
+      const missingIndex =
+        photos.findIndex(
+          (slot) =>
+            !slot.file
+        );
+
+      if (
+        missingIndex !==
+        -1
+      ) {
+        setError(
+          `Please upload photo ${
+            missingIndex + 1
+          } of ${quantity} before continuing.`
+        );
+
+        return;
+      }
+
+      setIsContinuing(
+        true
+      );
 
       try {
         /*
-         * Upload the original image to the
-         * private Supabase Storage bucket.
+         * ===================================================
+         * UPLOAD ALL PHOTOS
+         * ===================================================
          *
-         * The browser never receives the
-         * server-only Supabase secret key.
+         * Already-uploaded slots are reused.
+         * This prevents duplicate uploads if the user
+         * retries after one upload has already succeeded.
          */
-        const supabasePhoto =
-          await uploadPhotoToSupabase(
-            photo
-          );
 
-        setUploadedPhoto(
-          supabasePhoto
-        );
+        const uploadedPhotos: PersistedPhoto[] =
+          [];
+
+        for (
+          let index = 0;
+          index <
+          photos.length;
+          index++
+        ) {
+          const slot =
+            photos[index];
+
+          if (!slot.file) {
+            throw new Error(
+              `Photo ${
+                index + 1
+              } is missing.`
+            );
+          }
+
+          let uploaded =
+            slot.uploaded;
+
+          if (!uploaded) {
+            uploaded =
+              await uploadPhotoToSupabase(
+                slot.file
+              );
+
+            setPhotos(
+              (
+                currentPhotos
+              ) => {
+                const nextPhotos =
+                  [
+                    ...currentPhotos,
+                  ];
+
+                if (
+                  nextPhotos[index]
+                ) {
+                  nextPhotos[
+                    index
+                  ] = {
+                    ...nextPhotos[
+                      index
+                    ],
+                    uploaded,
+                  };
+                }
+
+                return nextPhotos;
+              }
+            );
+          }
+
+          const preview =
+            await createThumbnailDataUrl(
+              slot.file
+            );
+
+          uploadedPhotos.push(
+            {
+              storagePath:
+                uploaded.storagePath,
+
+              originalName:
+                uploaded.originalName,
+
+              mimeType:
+                uploaded.mimeType,
+
+              fileSize:
+                uploaded.fileSize,
+
+              preview,
+            }
+          );
+        }
 
         /*
-         * Keep the existing local preview
-         * behavior for the checkout pages.
+         * ===================================================
+         * VERIFY ALL UPLOADS
+         * ===================================================
          */
-        const photoDataUrl =
-          await fileToDataUrl(photo);
+
+        if (
+          uploadedPhotos.length !==
+          quantity
+        ) {
+          throw new Error(
+            `Expected ${quantity} uploaded photos but received ${uploadedPhotos.length}.`
+          );
+        }
+
+        const invalidUpload =
+          uploadedPhotos.find(
+            (photo) =>
+              !photo.storagePath ||
+              !photo.storagePath
+                .startsWith(
+                  "orders/"
+                )
+          );
+
+        if (invalidUpload) {
+          throw new Error(
+            "One or more photos were not saved correctly. Please try again."
+          );
+        }
+
+        /*
+         * ===================================================
+         * ORDER DATA
+         * ===================================================
+         */
+
+        const firstPhoto =
+          uploadedPhotos[0];
 
         const orderData = {
           sizeId,
-          sizeName: size.name,
-          dimensions: size.dimensions,
+          sizeName:
+            size.name,
+          dimensions:
+            size.dimensions,
 
           frameId,
-          frameName: frame.name,
+          frameName:
+            frame.name,
 
           lithophaneId,
-          lithophaneName: lithophane.name,
+          lithophaneName:
+            lithophane.name,
+
           lithophaneDescription:
             lithophane.description,
 
           quantity,
 
-          unitPrice: size.price,
+          unitPrice:
+            size.price,
 
           subtotal,
           discount,
           total,
 
-          photoName: photo.name,
-          photoType: photo.type,
-          photoSize: photo.size,
+          /*
+           * New multi-photo structure.
+           */
+          photos:
+            uploadedPhotos,
+
+          /*
+           * Legacy first-photo fields remain
+           * for compatibility with older pages.
+           */
+          photoName:
+            firstPhoto.originalName,
+
+          photoType:
+            firstPhoto.mimeType,
+
+          photoSize:
+            firstPhoto.fileSize,
 
           photoStoragePath:
-            supabasePhoto.storagePath,
+            firstPhoto.storagePath,
 
           photoStorageName:
-            supabasePhoto.originalName,
+            firstPhoto.originalName,
 
           photoStorageMimeType:
-            supabasePhoto.mimeType,
+            firstPhoto.mimeType,
 
           photoStorageSize:
-            supabasePhoto.fileSize,
+            firstPhoto.fileSize,
 
           createdAt:
             new Date().toISOString(),
         };
 
+        /*
+         * ===================================================
+         * SAVE MULTI-PHOTO CHECKOUT CONFIG
+         * ===================================================
+         */
+
         localStorage.setItem(
           "rmx_checkout_config",
-          JSON.stringify(orderData)
+          JSON.stringify(
+            orderData
+          )
         );
+
+        sessionStorage.setItem(
+          "rmx_checkout_config",
+          JSON.stringify(
+            orderData
+          )
+        );
+
+        sessionStorage.setItem(
+          "rmx_checkout_order",
+          JSON.stringify(
+            orderData
+          )
+        );
+
+        /*
+         * ===================================================
+         * SAVE MULTI-PHOTO STORAGE
+         * ===================================================
+         */
+
+        localStorage.setItem(
+          "rmx_checkout_photos",
+          JSON.stringify(
+            uploadedPhotos
+          )
+        );
+
+        /*
+         * ===================================================
+         * SAVE ORDER DETAILS
+         * ===================================================
+         */
 
         localStorage.setItem(
           "rmx_order_details",
           JSON.stringify({
-            size: sizeId,
+            size:
+              sizeId,
+
             sizeId,
-            sizeName: size.name,
-            dimensions: size.dimensions,
 
-            frame: frameId,
+            sizeName:
+              size.name,
+
+            dimensions:
+              size.dimensions,
+
+            frame:
+              frameId,
+
             frameId,
-            frameName: frame.name,
 
-            lithophane: lithophaneId,
+            frameName:
+              frame.name,
+
+            lithophane:
+              lithophaneId,
+
             lithophaneId,
+
             lithophaneName:
               lithophane.name,
 
             quantity,
 
-            price: size.price,
-            unitPrice: size.price,
+            price:
+              size.price,
+
+            unitPrice:
+              size.price,
 
             subtotal,
             discount,
             total,
 
+            /*
+             * Multi-photo paths.
+             */
+            photos:
+              uploadedPhotos.map(
+                (
+                  photo
+                ) => ({
+                  storagePath:
+                    photo.storagePath,
+
+                  originalName:
+                    photo.originalName,
+
+                  mimeType:
+                    photo.mimeType,
+
+                  fileSize:
+                    photo.fileSize,
+                })
+              ),
+
+            /*
+             * Legacy first-photo path.
+             */
             photoStoragePath:
-              supabasePhoto.storagePath,
+              firstPhoto.storagePath,
           })
         );
 
-        sessionStorage.setItem(
-          "rmx_checkout_order",
-          JSON.stringify(orderData)
-        );
+        /*
+         * ===================================================
+         * LEGACY FIRST-PHOTO STORAGE
+         * ===================================================
+         *
+         * Keep these keys so the existing customer-details,
+         * payment and success pages continue to understand
+         * the first uploaded photo.
+         */
 
         localStorage.setItem(
           "rmx_checkout_photo",
-          photoDataUrl
+          firstPhoto.preview
         );
 
         localStorage.setItem(
           "rmx_lithophane_photo",
-          photoDataUrl
+          firstPhoto.preview
         );
 
         localStorage.setItem(
           "lithophanePhoto",
-          photoDataUrl
+          firstPhoto.preview
         );
 
         localStorage.setItem(
           "uploadedPhoto",
-          photoDataUrl
+          firstPhoto.preview
         );
 
         localStorage.setItem(
           "rmx_photo_storage_path",
-          supabasePhoto.storagePath
+          firstPhoto.storagePath
         );
 
-        sessionStorage.setItem(
-          "rmx_checkout_config",
-          JSON.stringify(orderData)
+        localStorage.setItem(
+          "rmx_photo_storage_name",
+          firstPhoto.originalName
         );
+
+        localStorage.setItem(
+          "rmx_photo_storage_mime_type",
+          firstPhoto.mimeType
+        );
+
+        localStorage.setItem(
+          "rmx_photo_storage_size",
+          String(
+            firstPhoto.fileSize
+          )
+        );
+
+        /*
+         * ===================================================
+         * CONTINUE
+         * ===================================================
+         */
 
         window.location.href =
           "/checkout/customer-details";
       } catch (uploadError) {
         console.error(
-          "Unable to save checkout photo:",
+          "Unable to save checkout photos:",
           uploadError
         );
 
         setError(
           uploadError instanceof Error
             ? uploadError.message
-            : "Unable to save your photo. Please try again."
+            : "Unable to save your photos. Please try again."
         );
 
-        setIsContinuing(false);
+        setIsContinuing(
+          false
+        );
       }
     };
 
@@ -499,8 +1113,13 @@ export default function CheckoutPage() {
           </h1>
 
           <p className="mt-3 max-w-2xl text-gray-400">
-            Upload your photo, confirm your configuration,
-            and continue with your order details.
+            Upload your photo
+            {quantity > 1
+              ? "s"
+              : ""}
+            , confirm your
+            configuration, and continue
+            with your order details.
           </p>
 
         </div>
@@ -513,98 +1132,178 @@ export default function CheckoutPage() {
 
               <h2 className="text-xl font-bold">
                 1. Upload your photo
+                {quantity > 1
+                  ? "s"
+                  : ""}
               </h2>
 
               <p className="mt-2 text-sm text-gray-500">
-                Use a clear, well-lit photo.
-                JPG, PNG, or WEBP up to 10 MB.
+                Quantity {quantity} requires{" "}
+                {quantity} photo
+                {quantity === 1
+                  ? ""
+                  : "s"}
+                . JPG, PNG, or WEBP up to
+                10 MB each.
               </p>
+
+              <div className="mt-4 flex items-center justify-between rounded-2xl border border-cyan-400/15 bg-cyan-400/[0.04] px-4 py-3">
+
+                <span className="text-sm text-gray-400">
+                  Photos selected
+                </span>
+
+                <span className="font-black text-cyan-400">
+                  {uploadedCount} /{" "}
+                  {quantity}
+                </span>
+
+              </div>
 
             </div>
 
-            {!previewUrl ? (
+            <div className="grid gap-5 sm:grid-cols-2">
 
-              <label className="group flex min-h-[360px] cursor-pointer flex-col items-center justify-center rounded-3xl border border-dashed border-cyan-400/30 bg-cyan-400/[0.03] px-6 text-center transition hover:border-cyan-400/60 hover:bg-cyan-400/[0.06]">
-
-                <input
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  onChange={handlePhoto}
-                  className="hidden"
-                />
-
-                <div className="mb-5 rounded-2xl border border-white/10 bg-white/[0.05] p-5">
-                  <Upload
-                    className="text-cyan-400"
-                    size={32}
-                  />
-                </div>
-
-                <p className="text-lg font-bold">
-                  Choose your photo
-                </p>
-
-                <p className="mt-2 text-sm text-gray-500">
-                  Click here or drag your image into this area
-                </p>
-
-                <span className="mt-6 rounded-xl bg-white px-5 py-3 text-sm font-black text-black transition group-hover:bg-cyan-300">
-                  SELECT PHOTO
-                </span>
-
-              </label>
-
-            ) : (
-
-              <div className="overflow-hidden rounded-3xl border border-white/10 bg-black">
-
-                <div className="relative aspect-square max-h-[560px]">
-
-                  <img
-                    src={previewUrl}
-                    alt="Uploaded photo preview"
-                    className="h-full w-full object-contain"
-                  />
-
-                  <button
-                    type="button"
-                    onClick={removePhoto}
-                    className="absolute right-4 top-4 rounded-full border border-white/10 bg-black/80 p-2 text-white backdrop-blur transition hover:bg-white hover:text-black"
-                    aria-label="Remove uploaded photo"
+              {photos.map(
+                (
+                  slot,
+                  index
+                ) => (
+                  <div
+                    key={
+                      index
+                    }
+                    className="overflow-hidden rounded-3xl border border-white/10 bg-black"
                   >
-                    <X size={18} />
-                  </button>
 
-                </div>
+                    <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
 
-                <div className="flex items-center justify-between border-t border-white/10 px-5 py-4">
+                      <div>
+                        <p className="text-sm font-bold">
+                          Photo{" "}
+                          {index + 1}
+                        </p>
 
-                  <div className="min-w-0">
+                        <p className="mt-1 text-[10px] uppercase tracking-wider text-gray-600">
+                          Required
+                        </p>
+                      </div>
 
-                    <p className="truncate text-sm font-bold">
-                      {photo?.name}
-                    </p>
+                      {slot.file && (
+                        <Check
+                          size={18}
+                          className="text-emerald-400"
+                        />
+                      )}
 
-                    <p className="mt-1 text-xs text-gray-500">
-                      {uploadedPhoto
-                        ? "Photo securely saved"
-                        : "Photo ready for upload"}
-                    </p>
+                    </div>
+
+                    {!slot.previewUrl ? (
+
+                      <label className="group flex min-h-[250px] cursor-pointer flex-col items-center justify-center px-5 text-center transition hover:bg-cyan-400/[0.03]">
+
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp"
+                          onChange={(
+                            event
+                          ) =>
+                            handlePhoto(
+                              index,
+                              event
+                            )
+                          }
+                          className="hidden"
+                        />
+
+                        <div className="mb-4 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+
+                          <Upload
+                            className="text-cyan-400"
+                            size={26}
+                          />
+
+                        </div>
+
+                        <p className="font-bold">
+                          Upload photo{" "}
+                          {index + 1}
+                        </p>
+
+                        <p className="mt-2 text-xs text-gray-600">
+                          JPG, PNG or WEBP
+                        </p>
+
+                        <span className="mt-4 rounded-xl bg-white px-4 py-2 text-xs font-black text-black transition group-hover:bg-cyan-300">
+                          SELECT PHOTO
+                        </span>
+
+                      </label>
+
+                    ) : (
+
+                      <div>
+
+                        <div className="relative aspect-square">
+
+                          <img
+                            src={
+                              slot.previewUrl
+                            }
+                            alt={`Uploaded photo ${index + 1}`}
+                            className="h-full w-full object-contain"
+                          />
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              removePhoto(
+                                index
+                              )
+                            }
+                            className="absolute right-3 top-3 rounded-full border border-white/10 bg-black/80 p-2 text-white backdrop-blur transition hover:bg-white hover:text-black"
+                            aria-label={`Remove photo ${index + 1}`}
+                          >
+                            <X
+                              size={
+                                16
+                              }
+                            />
+                          </button>
+
+                        </div>
+
+                        <div className="border-t border-white/10 px-4 py-3">
+
+                          <p className="truncate text-xs font-bold">
+                            {
+                              slot
+                                .file
+                                ?.name
+                            }
+                          </p>
+
+                          <p className="mt-1 text-[10px] text-gray-600">
+                            {slot
+                              .uploaded
+                              ? "Securely uploaded"
+                              : "Ready to upload"}
+                          </p>
+
+                        </div>
+
+                      </div>
+
+                    )}
 
                   </div>
+                )
+              )}
 
-                  <Check
-                    className="shrink-0 text-emerald-400"
-                    size={20}
-                  />
-
-                </div>
-
-              </div>
-            )}
+            </div>
 
             {error && (
-              <p className="mt-4 rounded-xl border border-red-400/20 bg-red-400/[0.06] px-4 py-3 text-sm text-red-300">
+              <p className="mt-5 rounded-xl border border-red-400/20 bg-red-400/[0.06] px-4 py-3 text-sm text-red-300">
                 {error}
               </p>
             )}
@@ -666,11 +1365,13 @@ export default function CheckoutPage() {
 
                 <img
                   src={
-                    previewUrl ||
+                    photos[0]
+                      ?.previewUrl ||
                     heroImage
                   }
                   alt={
-                    previewUrl
+                    photos[0]
+                      ?.previewUrl
                       ? "Your uploaded photo"
                       : "Selected lithophane configuration"
                   }
@@ -682,8 +1383,9 @@ export default function CheckoutPage() {
             </div>
 
             <p className="mt-3 text-center text-xs text-gray-600">
-              {previewUrl
-                ? "Your uploaded photo"
+              {photos[0]
+                ?.previewUrl
+                ? "First uploaded photo"
                 : "Product reference preview"}
             </p>
 
@@ -728,14 +1430,16 @@ export default function CheckoutPage() {
                 <button
                   type="button"
                   onClick={() =>
-                    setQuantity((q) =>
-                      Math.max(
-                        1,
-                        q - 1
-                      )
+                    updateQuantity(
+                      quantity -
+                        1
                     )
                   }
-                  className="px-3 text-lg text-gray-400 hover:text-white"
+                  disabled={
+                    quantity <=
+                    1
+                  }
+                  className="px-3 text-lg text-gray-400 hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
                   aria-label="Decrease quantity"
                 >
                   −
@@ -748,14 +1452,16 @@ export default function CheckoutPage() {
                 <button
                   type="button"
                   onClick={() =>
-                    setQuantity((q) =>
-                      Math.min(
-                        10,
-                        q + 1
-                      )
+                    updateQuantity(
+                      quantity +
+                        1
                     )
                   }
-                  className="px-3 text-lg text-gray-400 hover:text-white"
+                  disabled={
+                    quantity >=
+                    10
+                  }
+                  className="px-3 text-lg text-gray-400 hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
                   aria-label="Increase quantity"
                 >
                   +
@@ -765,28 +1471,77 @@ export default function CheckoutPage() {
 
             </div>
 
+            <div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+
+              <div className="flex justify-between text-sm text-gray-400">
+                <span>
+                  Required photos
+                </span>
+
+                <span className="font-bold text-white">
+                  {quantity}
+                </span>
+              </div>
+
+              <div className="mt-2 flex justify-between text-sm text-gray-400">
+                <span>
+                  Uploaded
+                </span>
+
+                <span
+                  className={
+                    uploadedCount ===
+                    quantity
+                      ? "font-bold text-emerald-400"
+                      : "font-bold text-cyan-400"
+                  }
+                >
+                  {uploadedCount}
+                </span>
+              </div>
+
+            </div>
+
             <div className="mt-6 space-y-3 border-t border-white/10 pt-5 text-sm">
 
               <div className="flex justify-between text-gray-400">
-                <span>Subtotal</span>
                 <span>
-                  ₹{subtotal.toLocaleString("en-IN")}
+                  Subtotal
+                </span>
+
+                <span>
+                  ₹
+                  {subtotal.toLocaleString(
+                    "en-IN"
+                  )}
                 </span>
               </div>
 
               {discount > 0 && (
                 <div className="flex justify-between text-emerald-400">
-                  <span>10% discount</span>
                   <span>
-                    -₹{discount.toLocaleString("en-IN")}
+                    10% discount
+                  </span>
+
+                  <span>
+                    -₹
+                    {discount.toLocaleString(
+                      "en-IN"
+                    )}
                   </span>
                 </div>
               )}
 
               <div className="flex justify-between pt-2 text-xl font-black">
-                <span>Total</span>
                 <span>
-                  ₹{total.toLocaleString("en-IN")}
+                  Total
+                </span>
+
+                <span>
+                  ₹
+                  {total.toLocaleString(
+                    "en-IN"
+                  )}
                 </span>
               </div>
 
@@ -800,27 +1555,42 @@ export default function CheckoutPage() {
                   continueToCustomerDetails
                 }
                 disabled={
-                  !photo ||
+                  !allPhotosReady ||
                   isContinuing
                 }
                 className="w-full rounded-2xl bg-white px-6 py-4 text-sm font-black text-black transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-gray-600"
               >
                 {isContinuing
-                  ? "SAVING YOUR ORDER..."
+                  ? `UPLOADING ${quantity} PHOTO${
+                      quantity === 1
+                        ? ""
+                        : "S"
+                    }...`
                   : "CONTINUE TO CUSTOMER DETAILS"}
               </button>
 
-              {!photo && (
+              {!allPhotosReady && (
                 <p className="mt-3 text-center text-xs text-gray-600">
-                  Upload your photo to continue.
+                  Upload all{" "}
+                  {quantity} photo
+                  {quantity === 1
+                    ? ""
+                    : "s"}{" "}
+                  to continue.
                 </p>
               )}
 
-              {photo && !isContinuing && (
-                <p className="mt-3 text-center text-xs text-gray-500">
-                  Continue to enter your delivery details.
-                </p>
-              )}
+              {allPhotosReady &&
+                !isContinuing && (
+                  <p className="mt-3 text-center text-xs text-gray-500">
+                    All {quantity} photo
+                    {quantity === 1
+                      ? ""
+                      : "s"}{" "}
+                    ready. Continue to enter
+                    your delivery details.
+                  </p>
+                )}
 
             </div>
 
