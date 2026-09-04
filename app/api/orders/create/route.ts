@@ -28,8 +28,8 @@ type PhotoInput = {
 };
 
 const SIZE_PRICES: Record<string, number> = {
-  standard: 799,
-  large: 1199,
+  standard: 1,
+  large: 1,
 };
 
 function normalizeSize(value: string | undefined): string {

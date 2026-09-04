@@ -5,8 +5,8 @@ import { createClient } from "@supabase/supabase-js";
 export const runtime = "nodejs";
 
 const SIZE_PRICES: Record<string, number> = {
-  standard: 799,
-  large: 1199,
+  standard: 1,
+  large: 1,
 };
 
 type DatabaseOrder = {
