@@ -9,6 +9,8 @@ const SIZE_PRICES: Record<string, number> = {
   large: 1199,
 };
 
+const PREPAID_DISCOUNT_RATE = 0.05;
+
 type DatabaseOrder = {
   id: string;
   order_number: string;
@@ -102,9 +104,6 @@ export async function POST(
      * The browser sends only the customer-facing
      * RMX order number.
      *
-     * Example:
-     * RMX-MTLM05ON-286060
-     *
      * We do NOT trust price, quantity or total
      * from the browser here.
      */
@@ -140,12 +139,6 @@ export async function POST(
      * -------------------------------------------------------
      * FIND EXISTING RMX ORDER
      * -------------------------------------------------------
-     *
-     * This is the order created by:
-     *
-     * /api/orders/create
-     *
-     * The database is now the source of truth.
      */
     const {
       data,
@@ -193,11 +186,6 @@ export async function POST(
       );
     }
 
-    /*
-     * Explicitly type the returned database
-     * record so TypeScript does not incorrectly
-     * infer the Supabase result as GenericStringError.
-     */
     const existingOrder =
       data as DatabaseOrder | null;
 
@@ -238,8 +226,14 @@ export async function POST(
      * VALIDATE DATABASE PRICING
      * -------------------------------------------------------
      *
-     * The amount used for Razorpay is calculated again
-     * from the database values.
+     * The database order contains the normal RMX price:
+     *
+     * subtotal
+     * - quantity discount
+     * = normal order total
+     *
+     * The additional prepaid discount is applied ONLY
+     * to the online Razorpay payment amount.
      */
     const normalizedSize =
       (
@@ -284,6 +278,26 @@ export async function POST(
     const expectedTotal =
       expectedSubtotal -
       expectedDiscount;
+
+    /*
+     * -------------------------------------------------------
+     * PREPAID DISCOUNT
+     * -------------------------------------------------------
+     *
+     * Existing quantity discount is applied first.
+     *
+     * Then the customer receives an additional 5% discount
+     * when choosing online/prepaid payment.
+     */
+    const prepaidDiscount =
+      Math.round(
+        expectedTotal *
+          PREPAID_DISCOUNT_RATE
+      );
+
+    const prepaidTotal =
+      expectedTotal -
+      prepaidDiscount;
 
     /*
      * Ensure the order stored in Supabase
@@ -347,56 +361,12 @@ export async function POST(
 
     /*
      * -------------------------------------------------------
-     * REUSE EXISTING RAZORPAY ORDER
-     * -------------------------------------------------------
-     *
-     * If Razorpay order creation already happened for
-     * this RMX order but payment was not completed,
-     * reuse the same Razorpay order.
-     */
-    if (
-      existingOrder.razorpay_order_id
-    ) {
-      console.log(
-        "Existing Razorpay order found:",
-        existingOrder.razorpay_order_id
-      );
-
-      return NextResponse.json({
-        success: true,
-        keyId,
-        orderId:
-          existingOrder.razorpay_order_id,
-        databaseOrderId:
-          existingOrder.id,
-        orderNumber:
-          existingOrder.order_number,
-        amount:
-          Math.round(
-            expectedTotal * 100
-          ),
-        currency: "INR",
-        size,
-        quantity,
-        unitPrice:
-          expectedUnitPrice,
-        subtotal:
-          expectedSubtotal,
-        discount:
-          expectedDiscount,
-        total:
-          expectedTotal,
-      });
-    }
-
-    /*
-     * -------------------------------------------------------
-     * CREATE RAZORPAY ORDER
+     * RAZORPAY AMOUNT
      * -------------------------------------------------------
      */
     const amountInPaise =
       Math.round(
-        expectedTotal * 100
+        prepaidTotal * 100
       );
 
     if (
@@ -412,23 +382,129 @@ export async function POST(
       );
     }
 
+    /*
+     * -------------------------------------------------------
+     * REUSE EXISTING RAZORPAY ORDER ONLY IF AMOUNT MATCHES
+     * -------------------------------------------------------
+     *
+     * This prevents an older Razorpay order created before
+     * the prepaid discount was introduced from charging the
+     * old amount.
+     */
+    if (
+      existingOrder.razorpay_order_id
+    ) {
+      try {
+        const razorpay =
+          new Razorpay({
+            key_id: keyId,
+            key_secret:
+              keySecret,
+          });
+
+        const existingRazorpayOrder =
+          await razorpay.orders.fetch(
+            existingOrder.razorpay_order_id
+          );
+
+        if (
+          Number(
+            existingRazorpayOrder.amount
+          ) ===
+          amountInPaise
+        ) {
+          console.log(
+            "Existing Razorpay order found with correct prepaid amount:",
+            existingOrder.razorpay_order_id
+          );
+
+          return NextResponse.json({
+            success: true,
+
+            keyId,
+
+            orderId:
+              existingOrder.razorpay_order_id,
+
+            databaseOrderId:
+              existingOrder.id,
+
+            orderNumber:
+              existingOrder.order_number,
+
+            amount:
+              amountInPaise,
+
+            currency:
+              "INR",
+
+            size,
+
+            quantity,
+
+            unitPrice:
+              expectedUnitPrice,
+
+            subtotal:
+              expectedSubtotal,
+
+            discount:
+              expectedDiscount,
+
+            total:
+              expectedTotal,
+
+            prepaidDiscount,
+
+            prepaidTotal,
+          });
+        }
+
+        console.log(
+          "Existing Razorpay order amount differs from current prepaid amount. Creating a new Razorpay order."
+        );
+      } catch (existingOrderError) {
+        console.error(
+          "Unable to inspect existing Razorpay order. A new payment order will be created:",
+          existingOrderError
+        );
+      }
+    }
+
+    /*
+     * -------------------------------------------------------
+     * CREATE RAZORPAY ORDER
+     * -------------------------------------------------------
+     */
     console.log(
-      "Creating Razorpay order:",
+      "Creating Razorpay prepaid order:",
       {
         orderNumber:
           existingOrder.order_number,
+
         databaseOrderId:
           existingOrder.id,
+
         size,
+
         quantity,
+
         unitPrice:
           expectedUnitPrice,
+
         subtotal:
           expectedSubtotal,
-        discount:
+
+        quantityDiscount:
           expectedDiscount,
-        total:
+
+        baseTotal:
           expectedTotal,
+
+        prepaidDiscount,
+
+        prepaidTotal,
+
         amountInPaise,
       }
     );
@@ -477,21 +553,34 @@ export async function POST(
                 expectedSubtotal
               ),
 
-            discount:
+            quantityDiscount:
               String(
                 expectedDiscount
               ),
 
-            total:
+            baseTotal:
               String(
                 expectedTotal
               ),
+
+            prepaidDiscount:
+              String(
+                prepaidDiscount
+              ),
+
+            prepaidTotal:
+              String(
+                prepaidTotal
+              ),
+
+            paymentType:
+              "prepaid",
           },
         }
       );
 
     console.log(
-      "Razorpay order created:",
+      "Razorpay prepaid order created:",
       razorpayOrder.id
     );
 
@@ -509,6 +598,7 @@ export async function POST(
         .update({
           razorpay_order_id:
             razorpayOrder.id,
+
           updated_at:
             new Date().toISOString(),
         })
@@ -523,11 +613,6 @@ export async function POST(
         updateOrderError
       );
 
-      /*
-       * We intentionally do not silently create another
-       * Razorpay order. The response tells the customer
-       * that the order could not be prepared safely.
-       */
       return NextResponse.json(
         {
           success: false,
@@ -578,6 +663,10 @@ export async function POST(
 
       total:
         expectedTotal,
+
+      prepaidDiscount,
+
+      prepaidTotal,
     });
   } catch (error) {
     console.error(

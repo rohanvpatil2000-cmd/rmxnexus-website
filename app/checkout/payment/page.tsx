@@ -92,6 +92,14 @@ type CreateOrderResponse = {
   orderId?: string;
   orderNumber?: string;
   databaseOrderId?: string;
+  size?: string;
+  quantity?: number;
+  unitPrice?: number;
+  subtotal?: number;
+  discount?: number;
+  total?: number;
+  prepaidDiscount?: number;
+  prepaidTotal?: number;
   error?: string;
 };
 
@@ -104,6 +112,11 @@ type VerifyResponse = {
   orderNumber?: string;
   status?: string;
   paymentStatus?: string;
+  amount?: number;
+  currency?: string;
+  baseTotal?: number;
+  prepaidDiscount?: number;
+  prepaidTotal?: number;
   error?: string;
 };
 
@@ -137,6 +150,15 @@ export default function PaymentPage() {
   const [razorpayLoaded, setRazorpayLoaded] =
     useState(false);
 
+  const [prepaidDiscount, setPrepaidDiscount] =
+    useState(0);
+
+  const [prepaidTotal, setPrepaidTotal] =
+    useState(0);
+
+  const [prepaidPricingLoaded, setPrepaidPricingLoaded] =
+    useState(false);
+
   /*
    * ---------------------------------------------------------
    * LOAD ORDER
@@ -168,10 +190,6 @@ export default function PaymentPage() {
 
       setOrder(parsed);
 
-      /*
-       * Restore previously selected payment
-       * method if one exists.
-       */
       const savedPaymentMethod =
         localStorage.getItem(
           "rmx_payment_method"
@@ -214,9 +232,6 @@ export default function PaymentPage() {
 
     const loadRazorpay = async () => {
       try {
-        /*
-         * Already available.
-         */
         if (window.Razorpay) {
           if (!cancelled) {
             setRazorpayLoaded(true);
@@ -225,9 +240,6 @@ export default function PaymentPage() {
           return;
         }
 
-        /*
-         * Check for an existing Razorpay script.
-         */
         const existingScript =
           document.querySelector(
             'script[src="https://checkout.razorpay.com/v1/checkout.js"]'
@@ -249,9 +261,6 @@ export default function PaymentPage() {
           return;
         }
 
-        /*
-         * Create Razorpay script.
-         */
         const script =
           document.createElement(
             "script"
@@ -316,6 +325,130 @@ export default function PaymentPage() {
   }, [
     paymentMethod,
     order,
+  ]);
+
+  /*
+   * ---------------------------------------------------------
+   * LOAD SERVER-SIDE PREPAID PRICE
+   * ---------------------------------------------------------
+   *
+   * This gives the UI the exact amount that the secure
+   * Razorpay endpoint will charge.
+   */
+  useEffect(() => {
+    if (
+      paymentMethod !== "online" ||
+      !order?.orderId
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadPrepaidPricing = async () => {
+      try {
+        setPrepaidPricingLoaded(false);
+        setError("");
+
+        const response =
+          await fetch(
+            "/api/razorpay/create-order",
+            {
+              method: "POST",
+
+              headers: {
+                "Content-Type":
+                  "application/json",
+              },
+
+              body: JSON.stringify({
+                orderNumber:
+                  order.orderId,
+              }),
+            }
+          );
+
+        let data: CreateOrderResponse;
+
+        try {
+          data =
+            (await response.json()) as CreateOrderResponse;
+        } catch {
+          throw new Error(
+            "Unable to read prepaid pricing."
+          );
+        }
+
+        if (
+          !response.ok ||
+          !data.success
+        ) {
+          throw new Error(
+            data?.error ||
+              "Unable to calculate prepaid price."
+          );
+        }
+
+        if (
+          typeof data.prepaidDiscount !==
+          "number" ||
+          typeof data.prepaidTotal !==
+          "number"
+        ) {
+          throw new Error(
+            "Prepaid pricing was not returned correctly."
+          );
+        }
+
+        if (
+          data.prepaidTotal <= 0
+        ) {
+          throw new Error(
+            "Invalid prepaid payment amount."
+          );
+        }
+
+        if (!cancelled) {
+          setPrepaidDiscount(
+            data.prepaidDiscount
+          );
+
+          setPrepaidTotal(
+            data.prepaidTotal
+          );
+
+          setPrepaidPricingLoaded(
+            true
+          );
+        }
+      } catch (pricingError) {
+        console.error(
+          "Prepaid pricing error:",
+          pricingError
+        );
+
+        if (!cancelled) {
+          setPrepaidPricingLoaded(
+            false
+          );
+
+          setError(
+            pricingError instanceof Error
+              ? pricingError.message
+              : "Unable to calculate prepaid price."
+          );
+        }
+      }
+    };
+
+    loadPrepaidPricing();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    paymentMethod,
+    order?.orderId,
   ]);
 
   /*
@@ -443,17 +576,6 @@ export default function PaymentPage() {
           );
         }
 
-        /*
-         * Server has confirmed the COD order.
-         *
-         * COD does NOT mark payment as paid.
-         *
-         * Expected database state:
-         *
-         * payment_method = cod
-         * status = pending
-         * payment_status = pending
-         */
         const updatedOrder = {
           ...order,
 
@@ -519,11 +641,6 @@ export default function PaymentPage() {
           );
         }
 
-        /*
-         * Go directly to success page.
-         *
-         * Razorpay is NOT opened.
-         */
         window.location.href =
           "/checkout/success";
       } catch (codError) {
@@ -549,14 +666,9 @@ export default function PaymentPage() {
      * ONLINE PAYMENT
      * -------------------------------------------------------
      */
-
     setLoading(true);
 
     try {
-      /*
-       * Make absolutely sure Razorpay
-       * exists before starting.
-       */
       if (!window.Razorpay) {
         await waitForRazorpay();
       }
@@ -567,15 +679,20 @@ export default function PaymentPage() {
         );
       }
 
-      /*
-       * Create or retrieve the Razorpay
-       * order from our secure server.
-       */
       console.log(
-        "Creating Razorpay order for RMX order:",
+        "Creating Razorpay prepaid order for RMX order:",
         order.orderId
       );
 
+      /*
+       * This endpoint:
+       *
+       * 1. Validates the database price.
+       * 2. Applies the extra 5% prepaid discount.
+       * 3. Creates/reuses the correct Razorpay order.
+       *
+       * The browser never supplies the price.
+       */
       const response =
         await fetch(
           "/api/razorpay/create-order",
@@ -641,14 +758,27 @@ export default function PaymentPage() {
         );
       }
 
-      if (data.amount <= 0) {
+      if (
+        data.amount <= 0
+      ) {
         throw new Error(
           "Invalid Razorpay payment amount."
         );
       }
 
+      if (
+        typeof data.prepaidDiscount !==
+        "number" ||
+        typeof data.prepaidTotal !==
+        "number"
+      ) {
+        throw new Error(
+          "Prepaid pricing was not returned correctly."
+        );
+      }
+
       console.log(
-        "Razorpay amount:",
+        "Razorpay prepaid amount:",
         data.amount,
         "paise / ₹",
         data.amount / 100
@@ -700,6 +830,19 @@ export default function PaymentPage() {
             String(
               order.order.quantity
             ),
+
+          paymentType:
+            "prepaid",
+
+          prepaidDiscount:
+            String(
+              data.prepaidDiscount
+            ),
+
+          prepaidTotal:
+            String(
+              data.prepaidTotal
+            ),
         },
 
         theme: {
@@ -722,9 +865,6 @@ export default function PaymentPage() {
                 paymentResponse
               );
 
-              /*
-               * Verify payment on our server.
-               */
               const verifyResponse =
                 await fetch(
                   "/api/razorpay/verify",
@@ -769,11 +909,6 @@ export default function PaymentPage() {
                 );
               }
 
-              /*
-               * Server has now confirmed
-               * the payment and updated
-               * the database.
-               */
               const updatedOrder = {
                 ...order,
 
@@ -785,6 +920,14 @@ export default function PaymentPage() {
 
                 paymentMethod:
                   "online",
+
+                prepaidDiscount:
+                  verifyData.prepaidDiscount ??
+                  data.prepaidDiscount,
+
+                prepaidTotal:
+                  verifyData.prepaidTotal ??
+                  data.prepaidTotal,
 
                 razorpay: {
                   paymentId:
@@ -827,10 +970,6 @@ export default function PaymentPage() {
                 paymentResponse.razorpay_payment_id
               );
 
-              /*
-               * Keep customer-facing
-               * RMX order number available.
-               */
               if (
                 verifyData.orderNumber ||
                 order.orderId
@@ -842,9 +981,6 @@ export default function PaymentPage() {
                 );
               }
 
-              /*
-               * Keep database UUID available.
-               */
               if (
                 verifyData.databaseOrderId ||
                 order.databaseOrderId
@@ -857,9 +993,6 @@ export default function PaymentPage() {
                 );
               }
 
-              /*
-               * Go to success page.
-               */
               window.location.href =
                 "/checkout/success";
             } catch (
@@ -897,11 +1030,6 @@ export default function PaymentPage() {
         },
       };
 
-      /*
-       * -----------------------------------------------------
-       * OPEN RAZORPAY
-       * -----------------------------------------------------
-       */
       console.log(
         "Opening Razorpay..."
       );
@@ -1107,7 +1235,13 @@ export default function PaymentPage() {
     order.order.quantity || 1;
 
   const onlineReady =
-    razorpayLoaded;
+    razorpayLoaded &&
+    prepaidPricingLoaded;
+
+  const displayedOnlineTotal =
+    prepaidPricingLoaded
+      ? prepaidTotal
+      : 0;
 
   return (
     <main
@@ -1251,8 +1385,7 @@ export default function PaymentPage() {
               "560px",
           }}
         >
-          Select how you would like to pay for your personalized RMX Nexus
-          order.
+          Save more by paying online securely.
         </p>
 
         <div
@@ -1315,6 +1448,9 @@ export default function PaymentPage() {
                   "12px",
               }}
             >
+              {/* ------------------------------------------------
+               * ONLINE — PRIMARY / RECOMMENDED
+               * ------------------------------------------------ */}
               <button
                 type="button"
                 disabled={loading}
@@ -1360,8 +1496,47 @@ export default function PaymentPage() {
                     loading
                       ? 0.7
                       : 1,
+
+                  position:
+                    "relative",
                 }}
               >
+                <div
+                  style={{
+                    position:
+                      "absolute",
+
+                    top:
+                      "-10px",
+
+                    right:
+                      "14px",
+
+                    background:
+                      "#22d3ee",
+
+                    color:
+                      "#000",
+
+                    borderRadius:
+                      "999px",
+
+                    padding:
+                      "5px 9px",
+
+                    fontSize:
+                      "8px",
+
+                    fontWeight:
+                      900,
+
+                    letterSpacing:
+                      ".6px",
+                  }}
+                >
+                  RECOMMENDED
+                </div>
+
                 <div
                   style={{
                     display:
@@ -1422,7 +1597,28 @@ export default function PaymentPage() {
                           800,
                       }}
                     >
-                      Online Payment
+                      Pay Online
+                    </div>
+
+                    <div
+                      style={{
+                        color:
+                          "#22d3ee",
+
+                        fontSize:
+                          "11px",
+
+                        marginTop:
+                          "4px",
+
+                        fontWeight:
+                          800,
+
+                        lineHeight:
+                          1.5,
+                      }}
+                    >
+                      SAVE EXTRA 5% INSTANTLY
                     </div>
 
                     <div
@@ -1431,7 +1627,7 @@ export default function PaymentPage() {
                           "#777",
 
                         fontSize:
-                          "11px",
+                          "10px",
 
                         marginTop:
                           "4px",
@@ -1440,8 +1636,68 @@ export default function PaymentPage() {
                           1.5,
                       }}
                     >
-                      Pay securely using Razorpay.
+                      UPI • Cards • Net Banking
                     </div>
+                  </div>
+
+                  <div
+                    style={{
+                      textAlign:
+                        "right",
+                    }}
+                  >
+                    {prepaidPricingLoaded ? (
+                      <>
+                        <div
+                          style={{
+                            color:
+                              "#666",
+
+                            fontSize:
+                              "10px",
+
+                            textDecoration:
+                              "line-through",
+                          }}
+                        >
+                          ₹{total.toLocaleString(
+                            "en-IN"
+                          )}
+                        </div>
+
+                        <div
+                          style={{
+                            color:
+                              "#fff",
+
+                            fontSize:
+                              "18px",
+
+                            fontWeight:
+                              900,
+
+                            marginTop:
+                              "2px",
+                          }}
+                        >
+                          ₹{displayedOnlineTotal.toLocaleString(
+                            "en-IN"
+                          )}
+                        </div>
+                      </>
+                    ) : (
+                      <div
+                        style={{
+                          color:
+                            "#666",
+
+                          fontSize:
+                            "10px",
+                        }}
+                      >
+                        CALCULATING...
+                      </div>
+                    )}
                   </div>
 
                   <div
@@ -1463,8 +1719,67 @@ export default function PaymentPage() {
                     }}
                   />
                 </div>
+
+                {prepaidPricingLoaded && (
+                  <div
+                    style={{
+                      marginTop:
+                        "14px",
+
+                      paddingTop:
+                        "12px",
+
+                      borderTop:
+                        "1px solid rgba(34,211,238,.14)",
+
+                      display:
+                        "flex",
+
+                      justifyContent:
+                        "space-between",
+
+                      alignItems:
+                        "center",
+                    }}
+                  >
+                    <span
+                      style={{
+                        color:
+                          "#34d399",
+
+                        fontSize:
+                          "10px",
+
+                        fontWeight:
+                          800,
+                      }}
+                    >
+                      🎁 PREPAID SAVING
+                    </span>
+
+                    <span
+                      style={{
+                        color:
+                          "#34d399",
+
+                        fontSize:
+                          "12px",
+
+                        fontWeight:
+                          900,
+                      }}
+                    >
+                      -₹{prepaidDiscount.toLocaleString(
+                        "en-IN"
+                      )}
+                    </span>
+                  </div>
+                )}
               </button>
 
+              {/* ------------------------------------------------
+               * COD — SECONDARY
+               * ------------------------------------------------ */}
               <button
                 type="button"
                 disabled={loading}
@@ -1483,13 +1798,13 @@ export default function PaymentPage() {
                   border:
                     paymentMethod ===
                     "cod"
-                      ? "1px solid #22d3ee"
+                      ? "1px solid #555"
                       : "1px solid #242424",
 
                   background:
                     paymentMethod ===
                     "cod"
-                      ? "rgba(34,211,238,.07)"
+                      ? "#0a0a0a"
                       : "#050505",
 
                   color:
@@ -1536,10 +1851,10 @@ export default function PaymentPage() {
                         "10px",
 
                       background:
-                        "rgba(34,211,238,.1)",
+                        "#111",
 
                       border:
-                        "1px solid rgba(34,211,238,.25)",
+                        "1px solid #252525",
 
                       display:
                         "flex",
@@ -1566,10 +1881,13 @@ export default function PaymentPage() {
                     <div
                       style={{
                         fontSize:
-                          "14px",
+                          "13px",
 
                         fontWeight:
-                          800,
+                          700,
+
+                        color:
+                          "#ccc",
                       }}
                     >
                       Cash on Delivery
@@ -1578,10 +1896,10 @@ export default function PaymentPage() {
                     <div
                       style={{
                         color:
-                          "#777",
+                          "#666",
 
                         fontSize:
-                          "11px",
+                          "10px",
 
                         marginTop:
                           "4px",
@@ -1590,7 +1908,9 @@ export default function PaymentPage() {
                           1.5,
                       }}
                     >
-                      Pay when your personalized order is delivered.
+                      Pay ₹{total.toLocaleString(
+                        "en-IN"
+                      )} when delivered.
                     </div>
                   </div>
 
@@ -1608,7 +1928,7 @@ export default function PaymentPage() {
                       border:
                         paymentMethod ===
                         "cod"
-                          ? "5px solid #22d3ee"
+                          ? "5px solid #777"
                           : "1px solid #555",
                     }}
                   />
@@ -1618,6 +1938,96 @@ export default function PaymentPage() {
 
             {paymentMethod ===
               "online" && (
+              <div
+                style={{
+                  marginTop:
+                    "16px",
+
+                  border:
+                    "1px solid rgba(34,211,238,.22)",
+
+                  background:
+                    "rgba(34,211,238,.045)",
+
+                  borderRadius:
+                    "12px",
+
+                  padding:
+                    "15px",
+
+                  fontSize:
+                    "11px",
+
+                  lineHeight:
+                    1.65,
+                }}
+              >
+                <div
+                  style={{
+                    color:
+                      "#22d3ee",
+
+                    fontWeight:
+                      900,
+
+                    fontSize:
+                      "12px",
+
+                    marginBottom:
+                      "8px",
+                  }}
+                >
+                  ⚡ WHY PAY ONLINE?
+                </div>
+
+                <div
+                  style={{
+                    color:
+                      "#bbb",
+
+                    marginBottom:
+                      "6px",
+                  }}
+                >
+                  ✓ Save an extra{" "}
+                  <strong
+                    style={{
+                      color:
+                        "#34d399",
+                    }}
+                  >
+                    ₹{prepaidDiscount.toLocaleString(
+                      "en-IN"
+                    )}
+                  </strong>{" "}
+                  instantly
+                </div>
+
+                <div
+                  style={{
+                    color:
+                      "#bbb",
+
+                    marginBottom:
+                      "6px",
+                  }}
+                >
+                  ✓ Secure payment via Razorpay
+                </div>
+
+                <div
+                  style={{
+                    color:
+                      "#bbb",
+                  }}
+                >
+                  ✓ Priority processing for prepaid orders
+                </div>
+              </div>
+            )}
+
+            {paymentMethod ===
+              "cod" && (
               <div
                 style={{
                   marginTop:
@@ -1648,57 +2058,15 @@ export default function PaymentPage() {
                 <strong
                   style={{
                     color:
-                      "#bbb",
-                  }}
-                >
-                  Online payment
-                </strong>
-                <br />
-                You will be redirected to the secure Razorpay checkout to
-                complete payment.
-              </div>
-            )}
-
-            {paymentMethod ===
-              "cod" && (
-              <div
-                style={{
-                  marginTop:
-                    "16px",
-
-                  border:
-                    "1px solid rgba(34,211,238,.18)",
-
-                  background:
-                    "rgba(34,211,238,.04)",
-
-                  borderRadius:
-                    "12px",
-
-                  padding:
-                    "14px",
-
-                  color:
-                    "#888",
-
-                  fontSize:
-                    "11px",
-
-                  lineHeight:
-                    1.6,
-                }}
-              >
-                <strong
-                  style={{
-                    color:
-                      "#22d3ee",
+                      "#aaa",
                   }}
                 >
                   Cash on Delivery
                 </strong>
                 <br />
-                Your order will be confirmed now. Payment will remain pending
-                until the amount is collected on delivery.
+                Pay ₹{total.toLocaleString(
+                  "en-IN"
+                )} when your personalized order is delivered.
               </div>
             )}
 
@@ -1741,7 +2109,10 @@ export default function PaymentPage() {
               }
               disabled={
                 loading ||
-                !order
+                !order ||
+                (paymentMethod ===
+                  "online" &&
+                  !onlineReady)
               }
               style={{
                 width:
@@ -1759,7 +2130,10 @@ export default function PaymentPage() {
                 background:
                   loading
                     ? "#333"
-                    : "#fff",
+                    : paymentMethod ===
+                        "online"
+                      ? "#22d3ee"
+                      : "#fff",
 
                 color:
                   loading
@@ -1767,16 +2141,19 @@ export default function PaymentPage() {
                     : "#000",
 
                 padding:
-                  "15px 20px",
+                  "16px 20px",
 
                 fontWeight:
-                  800,
+                  900,
 
                 fontSize:
                   "12px",
 
                 cursor:
-                  loading
+                  loading ||
+                  (paymentMethod ===
+                    "online" &&
+                    !onlineReady)
                     ? "default"
                     : "pointer",
 
@@ -1790,8 +2167,10 @@ export default function PaymentPage() {
                     "cod"
                   ? "CONFIRM CASH ON DELIVERY"
                   : onlineReady
-                    ? "PROCEED TO ONLINE PAYMENT"
-                    : "LOADING RAZORPAY..."}
+                    ? `PAY ₹${displayedOnlineTotal.toLocaleString(
+                        "en-IN"
+                      )} & SAVE 5%`
+                    : "PREPARING SECURE PAYMENT..."}
             </button>
 
             <p
@@ -1822,7 +2201,10 @@ export default function PaymentPage() {
                 "#080808",
 
               border:
-                "1px solid #202020",
+                paymentMethod ===
+                "online"
+                  ? "1px solid rgba(34,211,238,.25)"
+                  : "1px solid #202020",
 
               borderRadius:
                 "16px",
@@ -1938,7 +2320,7 @@ export default function PaymentPage() {
                 paymentMethod ===
                 "cod"
                   ? "Cash on Delivery"
-                  : "Online Payment"
+                  : "Online • Prepaid"
               }
             />
 
@@ -2008,7 +2390,7 @@ export default function PaymentPage() {
                   }}
                 >
                   <span>
-                    Discount
+                    Quantity Discount
                   </span>
 
                   <span>
@@ -2021,6 +2403,44 @@ export default function PaymentPage() {
                   </span>
                 </div>
               )}
+
+              {paymentMethod ===
+                "online" &&
+                prepaidPricingLoaded &&
+                prepaidDiscount >
+                  0 && (
+                  <div
+                    style={{
+                      display:
+                        "flex",
+
+                      justifyContent:
+                        "space-between",
+
+                      color:
+                        "#22d3ee",
+
+                      fontSize:
+                        "11px",
+
+                      marginBottom:
+                        "8px",
+
+                      fontWeight:
+                        800,
+                    }}
+                  >
+                    <span>
+                      Prepaid Discount (5%)
+                    </span>
+
+                    <span>
+                      -₹{prepaidDiscount.toLocaleString(
+                        "en-IN"
+                      )}
+                    </span>
+                  </div>
+                )}
 
               <div
                 style={{
@@ -2035,6 +2455,12 @@ export default function PaymentPage() {
 
                   marginTop:
                     "12px",
+
+                  paddingTop:
+                    "12px",
+
+                  borderTop:
+                    "1px solid #202020",
                 }}
               >
                 <span
@@ -2052,13 +2478,16 @@ export default function PaymentPage() {
                   {paymentMethod ===
                   "cod"
                     ? "Amount Due"
-                    : "Total"}
+                    : "Pay Now"}
                 </span>
 
                 <span
                   style={{
                     color:
-                      "#fff",
+                      paymentMethod ===
+                      "online"
+                        ? "#22d3ee"
+                        : "#fff",
 
                     fontSize:
                       "21px",
@@ -2067,11 +2496,58 @@ export default function PaymentPage() {
                       900,
                   }}
                 >
-                  ₹{total.toLocaleString(
+                  ₹{(
+                    paymentMethod ===
+                    "online"
+                      ? displayedOnlineTotal
+                      : total
+                  ).toLocaleString(
                     "en-IN"
                   )}
                 </span>
               </div>
+
+              {paymentMethod ===
+                "online" &&
+                prepaidPricingLoaded && (
+                <div
+                  style={{
+                    marginTop:
+                      "12px",
+
+                    border:
+                      "1px solid rgba(52,211,153,.2)",
+
+                    background:
+                      "rgba(52,211,153,.045)",
+
+                    borderRadius:
+                      "9px",
+
+                    padding:
+                      "9px 10px",
+
+                    color:
+                      "#34d399",
+
+                    fontSize:
+                      "10px",
+
+                    fontWeight:
+                      800,
+
+                    textAlign:
+                      "center",
+
+                    lineHeight:
+                      1.5,
+                  }}
+                >
+                  🎁 You're saving ₹{prepaidDiscount.toLocaleString(
+                    "en-IN"
+                  )} by paying online
+                </div>
+              )}
             </div>
 
             <div

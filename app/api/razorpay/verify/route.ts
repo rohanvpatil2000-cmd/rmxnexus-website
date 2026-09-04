@@ -5,6 +5,8 @@ import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 
+const PREPAID_DISCOUNT_RATE = 0.05;
+
 type DatabaseOrder = {
   id: string;
   order_number: string;
@@ -173,6 +175,7 @@ export async function POST(
       {
         razorpayOrderId:
           razorpay_order_id,
+
         razorpayPaymentId:
           razorpay_payment_id,
       }
@@ -197,6 +200,7 @@ export async function POST(
         {
           razorpayOrderId:
             razorpay_order_id,
+
           razorpayPaymentId:
             razorpay_payment_id,
         }
@@ -269,9 +273,6 @@ export async function POST(
       );
     }
 
-    /*
-     * Explicitly type the Supabase result.
-     */
     const rmxOrder =
       data as DatabaseOrder | null;
 
@@ -296,12 +297,16 @@ export async function POST(
       {
         databaseOrderId:
           rmxOrder.id,
+
         orderNumber:
           rmxOrder.order_number,
+
         total:
           rmxOrder.total,
+
         paymentStatus:
           rmxOrder.payment_status,
+
         status:
           rmxOrder.status,
       }
@@ -311,13 +316,6 @@ export async function POST(
      * -------------------------------------------------------
      * PREVENT DUPLICATE PAYMENT PROCESSING
      * -------------------------------------------------------
-     *
-     * IMPORTANT:
-     * Your existing database constraint allows "paid"
-     * but does NOT allow "confirmed".
-     *
-     * Therefore "paid" is the final successful status
-     * for the orders.status column.
      */
     if (
       rmxOrder.payment_status ===
@@ -325,10 +323,6 @@ export async function POST(
       rmxOrder.status ===
         "paid"
     ) {
-      /*
-       * If the same payment was already recorded,
-       * return success.
-       */
       if (
         rmxOrder.razorpay_payment_id ===
         razorpay_payment_id
@@ -385,9 +379,6 @@ export async function POST(
      * -------------------------------------------------------
      * FETCH PAYMENT FROM RAZORPAY
      * -------------------------------------------------------
-     *
-     * We verify the payment directly with Razorpay
-     * instead of trusting only the browser callback.
      */
     const paymentResponse =
       await razorpay.payments.fetch(
@@ -402,12 +393,16 @@ export async function POST(
       {
         paymentId:
           payment.id,
+
         orderId:
           payment.order_id,
+
         amount:
           payment.amount,
+
         currency:
           payment.currency,
+
         status:
           payment.status,
       }
@@ -427,6 +422,7 @@ export async function POST(
         {
           expectedOrderId:
             razorpay_order_id,
+
           paymentOrderId:
             payment.order_id,
         }
@@ -468,29 +464,29 @@ export async function POST(
 
     /*
      * -------------------------------------------------------
-     * VERIFY PAYMENT AMOUNT
+     * VERIFY PREPAID PAYMENT AMOUNT
      * -------------------------------------------------------
      *
-     * Supabase:
-     * total = rupees
+     * The database total is the normal RMX order total.
      *
-     * Razorpay:
-     * amount = paise
+     * The online payment receives an additional 5% discount.
      *
-     * ₹799 = 79900 paise
+     * Example:
+     *
+     * Database total = ₹799
+     * Prepaid discount = ₹40
+     * Expected Razorpay amount = ₹759
      */
-    const expectedAmountInPaise =
-      Math.round(
-        Number(
-          rmxOrder.total
-        ) * 100
+    const baseTotal =
+      Number(
+        rmxOrder.total
       );
 
     if (
       !Number.isFinite(
-        expectedAmountInPaise
+        baseTotal
       ) ||
-      expectedAmountInPaise <= 0
+      baseTotal <= 0
     ) {
       console.error(
         "Invalid RMX order total:",
@@ -507,6 +503,46 @@ export async function POST(
       );
     }
 
+    const prepaidDiscount =
+      Math.round(
+        baseTotal *
+          PREPAID_DISCOUNT_RATE
+      );
+
+    const prepaidTotal =
+      baseTotal -
+      prepaidDiscount;
+
+    const expectedAmountInPaise =
+      Math.round(
+        prepaidTotal * 100
+      );
+
+    if (
+      !Number.isFinite(
+        expectedAmountInPaise
+      ) ||
+      expectedAmountInPaise <= 0
+    ) {
+      console.error(
+        "Invalid prepaid RMX order amount:",
+        {
+          baseTotal,
+          prepaidDiscount,
+          prepaidTotal,
+        }
+      );
+
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Invalid prepaid RMX order amount.",
+        },
+        { status: 500 }
+      );
+    }
+
     if (
       Number(
         payment.amount
@@ -514,17 +550,21 @@ export async function POST(
       expectedAmountInPaise
     ) {
       console.error(
-        "Payment amount mismatch:",
+        "Prepaid payment amount mismatch:",
         {
+          baseTotal,
+
+          prepaidDiscount,
+
+          prepaidTotal,
+
           expectedAmountInPaise,
 
           receivedAmountInPaise:
             payment.amount,
 
           expectedRupees:
-            Number(
-              rmxOrder.total
-            ),
+            prepaidTotal,
 
           receivedRupees:
             Number(
@@ -537,7 +577,7 @@ export async function POST(
         {
           success: false,
           error:
-            "Payment amount does not match the RMX order.",
+            "Payment amount does not match the RMX prepaid order.",
         },
         { status: 400 }
       );
@@ -559,6 +599,7 @@ export async function POST(
         {
           paymentId:
             payment.id,
+
           status:
             payment.status,
         }
@@ -581,29 +622,10 @@ export async function POST(
      *
      * IMPORTANT:
      *
-     * Your actual database constraint supports:
+     * orders.total remains the normal RMX price.
      *
-     * status = "paid"
-     *
-     * It does NOT support:
-     *
-     * status = "confirmed"
-     *
-     * Therefore we use "paid" here.
-     *
-     * Final database state:
-     *
-     * status:
-     * paid
-     *
-     * payment_status:
-     * paid
-     *
-     * razorpay_order_id:
-     * order_...
-     *
-     * razorpay_payment_id:
-     * pay_...
+     * The 5% prepaid discount is a payment-specific
+     * discount and is not written into the base order total.
      */
     const {
       data:
@@ -659,9 +681,6 @@ export async function POST(
       );
     }
 
-    /*
-     * Explicitly type updated Supabase row.
-     */
     const updatedOrder =
       updatedOrderData as DatabaseOrder | null;
 
@@ -700,6 +719,15 @@ export async function POST(
 
         razorpayPaymentId:
           updatedOrder.razorpay_payment_id,
+
+        baseTotal:
+          baseTotal,
+
+        prepaidDiscount:
+          prepaidDiscount,
+
+        prepaidTotal:
+          prepaidTotal,
       }
     );
 
@@ -712,7 +740,7 @@ export async function POST(
       success: true,
 
       message:
-        "Payment verified and RMX order marked as paid.",
+        "Payment verified and RMX prepaid order marked as paid.",
 
       paymentId:
         razorpay_payment_id,
@@ -737,6 +765,12 @@ export async function POST(
 
       currency:
         payment.currency,
+
+      baseTotal,
+
+      prepaidDiscount,
+
+      prepaidTotal,
     });
   } catch (error) {
     console.error(
