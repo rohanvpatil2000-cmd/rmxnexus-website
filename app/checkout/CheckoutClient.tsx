@@ -1092,9 +1092,9 @@ export default function CheckoutPage() {
 
         <button
           type="button"
-          onClick={() =>
-            window.history.back()
-          }
+          onClick={() => {
+            window.location.href = "/";
+          }}
           className="mb-8 inline-flex items-center gap-2 text-sm font-semibold text-gray-400 transition hover:text-white"
         >
           <ChevronLeft size={18} />
