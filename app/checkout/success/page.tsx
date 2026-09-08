@@ -2,6 +2,17 @@
 
 import { useEffect, useState } from "react";
 
+declare global {
+  interface Window {
+    fbq?: (
+      command: string,
+      eventName: string,
+      parameters?: Record<string, unknown>,
+      options?: Record<string, unknown>
+    ) => void;
+  }
+}
+
 type PaymentMethod =
   | "online"
   | "cod";
@@ -28,6 +39,10 @@ type OrderData = {
     quantity?: number;
     total?: number;
   };
+
+  prepaidDiscount?: number;
+
+  prepaidTotal?: number;
 
   razorpay?: {
     paymentId?: string;
@@ -92,14 +107,233 @@ export default function SuccessPage() {
     }
   }, []);
 
+  /*
+   * ---------------------------------------------------------
+   * META PURCHASE TRACKING
+   * ---------------------------------------------------------
+   *
+   * Purchase is sent only after the customer reaches this
+   * success page through the completed order flow.
+   *
+   * COD:
+   *   Value = normal order total because payment is collected
+   *   on delivery.
+   *
+   * ONLINE:
+   *   Value = actual prepaid amount paid after the extra 5%
+   *   prepaid discount.
+   *
+   * A localStorage key prevents the same order from generating
+   * another Purchase event if the customer refreshes the page.
+   */
+  useEffect(() => {
+    if (!order?.orderId) {
+      return;
+    }
+
+    const paymentMethod =
+      order.paymentMethod;
+
+    const isCod =
+      paymentMethod === "cod";
+
+    const isOnline =
+      paymentMethod === "online";
+
+    /*
+     * The success page should only represent a confirmed order.
+     *
+     * COD remains payment_status = pending because payment is
+     * collected on delivery, but the COD confirmation endpoint
+     * has already confirmed the order before this page is shown.
+     *
+     * Online orders must have payment_status = paid.
+     */
+    const orderConfirmed =
+      isCod ||
+      (
+        isOnline &&
+        order.paymentStatus ===
+          "paid"
+      );
+
+    if (!orderConfirmed) {
+      return;
+    }
+
+    /*
+     * Determine the exact transaction value to send to Meta.
+     */
+    let purchaseValue: number;
+
+    if (isCod) {
+      purchaseValue =
+        Number(
+          order.order?.total
+        );
+    } else {
+      purchaseValue =
+        Number(
+          order.prepaidTotal
+        );
+    }
+
+    /*
+     * Never send an invalid or guessed purchase amount.
+     */
+    if (
+      !Number.isFinite(
+        purchaseValue
+      ) ||
+      purchaseValue <= 0
+    ) {
+      console.error(
+        "Meta Purchase tracking skipped: invalid purchase value.",
+        {
+          orderId:
+            order.orderId,
+          paymentMethod,
+          purchaseValue,
+        }
+      );
+
+      return;
+    }
+
+    const trackingKey =
+      `rmx_meta_purchase_tracked_${order.orderId}`;
+
+    /*
+     * Prevent duplicate Purchase events on refresh.
+     */
+    if (
+      localStorage.getItem(
+        trackingKey
+      ) === "true"
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const trackPurchase =
+      () => {
+        if (cancelled) {
+          return;
+        }
+
+        if (
+          typeof window ===
+            "undefined" ||
+          typeof window.fbq !==
+            "function"
+        ) {
+          return false;
+        }
+
+        try {
+          window.fbq(
+            "track",
+            "Purchase",
+            {
+              value:
+                purchaseValue,
+
+              currency:
+                "INR",
+
+              content_name:
+                "Personalized Lithophane Lamp",
+
+              content_type:
+                "product",
+            }
+          );
+
+          localStorage.setItem(
+            trackingKey,
+            "true"
+          );
+
+          console.log(
+            "Meta Purchase event sent:",
+            {
+              orderId:
+                order.orderId,
+
+              value:
+                purchaseValue,
+
+              currency:
+                "INR",
+
+              paymentMethod,
+            }
+          );
+
+          return true;
+        } catch (trackingError) {
+          console.error(
+            "Meta Purchase tracking error:",
+            trackingError
+          );
+
+          return false;
+        }
+      };
+
+    /*
+     * MetaPixel is loaded globally with afterInteractive.
+     * Give it time to initialize before giving up.
+     */
+    if (
+      trackPurchase()
+    ) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    let attempts = 0;
+
+    const maxAttempts =
+      100;
+
+    const interval =
+      window.setInterval(
+        () => {
+          attempts += 1;
+
+          if (
+            trackPurchase() ||
+            attempts >=
+              maxAttempts
+          ) {
+            window.clearInterval(
+              interval
+            );
+          }
+        },
+        100
+      );
+
+    return () => {
+      cancelled = true;
+
+      window.clearInterval(
+        interval
+      );
+    };
+  }, [
+    order,
+  ]);
+
   const isCod =
     order?.paymentMethod ===
     "cod";
 
   const title =
-    isCod
-      ? "Order Confirmed"
-      : "Order Confirmed";
+    "Order Confirmed";
 
   const badge =
     isCod
@@ -115,6 +349,19 @@ export default function SuccessPage() {
     isCod
       ? "Amount Due on Delivery"
       : "Amount Paid";
+
+  /*
+   * COD uses the normal order total.
+   *
+   * Online uses the actual prepaid total after the additional
+   * prepaid discount.
+   */
+  const displayedAmount =
+    isCod
+      ? order?.order?.total ||
+        0
+      : order?.prepaidTotal ||
+        0;
 
   const message =
     isCod
@@ -387,14 +634,23 @@ export default function SuccessPage() {
               label={
                 amountLabel
               }
-              value={`₹${(
-                order?.order
-                  ?.total ||
-                0
-              ).toLocaleString(
+              value={`₹${displayedAmount.toLocaleString(
                 "en-IN"
               )}`}
             />
+
+            {!isCod &&
+              typeof order?.prepaidDiscount ===
+                "number" &&
+              order.prepaidDiscount >
+                0 && (
+                <InfoRow
+                  label="Prepaid Discount"
+                  value={`-₹${order.prepaidDiscount.toLocaleString(
+                    "en-IN"
+                  )}`}
+                />
+              )}
 
             {!isCod &&
               order?.razorpay
