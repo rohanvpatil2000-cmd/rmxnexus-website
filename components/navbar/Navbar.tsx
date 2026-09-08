@@ -10,6 +10,9 @@ const links = [
   { name: "Contact", href: "#contact" },
 ];
 
+const whatsappUrl =
+  "https://wa.me/919021971507?text=Hi%20RMX%20Nexus%2C%20I%E2%80%99m%20interested%20in%20your%20personalized%20lithophane%20lamps.%20I%E2%80%99d%20like%20to%20know%20more.";
+
 export default function Navbar() {
   return (
     <motion.nav
@@ -19,7 +22,6 @@ export default function Navbar() {
       className="fixed left-1/2 top-6 z-50 w-[95%] max-w-7xl -translate-x-1/2"
     >
       <div className="flex items-center justify-between rounded-full border border-white/10 bg-black/60 px-8 py-4 backdrop-blur-2xl">
-
         {/* Logo */}
 
         <motion.div
@@ -34,7 +36,6 @@ export default function Navbar() {
         {/* Desktop Menu */}
 
         <div className="hidden items-center gap-10 md:flex">
-
           {links.map((item) => (
             <motion.a
               key={item.name}
@@ -48,23 +49,17 @@ export default function Navbar() {
               {item.name}
             </motion.a>
           ))}
-
         </div>
 
-        {/* Button */}
+        {/* WhatsApp Button */}
 
-        <motion.button
-          whileHover={{
-            scale: 1.05,
-          }}
-          whileTap={{
-            scale: 0.95,
-          }}
-          className="rounded-full bg-white px-7 py-3 font-semibold text-black"
+        <a
+          href={whatsappUrl}
+          aria-label="Get a quote from RMX Nexus on WhatsApp"
+          className="rounded-full bg-white px-7 py-3 font-semibold !text-black transition-transform duration-200 hover:scale-105 active:scale-95"
         >
           Get Quote
-        </motion.button>
-
+        </a>
       </div>
     </motion.nav>
   );
