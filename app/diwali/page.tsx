@@ -1,4 +1,5 @@
 import Link from "next/link";
+import MetaViewContent from "@/components/MetaViewContent";
 
 const standardImages = [
   "/images/lithophane/standard/RMX_STANDARD_11.2cm_01.jpg",
@@ -23,6 +24,8 @@ const largeImages = [
 export default function DiwaliPage() {
   return (
     <main className="min-h-screen bg-black text-white">
+      <MetaViewContent />
+
       {/* HERO */}
       <section className="relative overflow-hidden">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,180,0,0.18),transparent_35%),radial-gradient(circle_at_bottom_left,rgba(255,80,0,0.12),transparent_35%)]" />
@@ -171,10 +174,22 @@ export default function DiwaliPage() {
 
             <div className="grid gap-4 sm:grid-cols-2">
               {[
-                ["Your photograph", "Use a personal photo instead of a generic design."],
-                ["3D printed", "Your image becomes a physical lithophane panel."],
-                ["Made for gifting", "A personal gift for family, couples and loved ones."],
-                ["Order online", "Upload your photo and complete the existing checkout."],
+                [
+                  "Your photograph",
+                  "Use a personal photo instead of a generic design.",
+                ],
+                [
+                  "3D printed",
+                  "Your image becomes a physical lithophane panel.",
+                ],
+                [
+                  "Made for gifting",
+                  "A personal gift for family, couples and loved ones.",
+                ],
+                [
+                  "Order online",
+                  "Upload your photo and complete the existing checkout.",
+                ],
               ].map(([title, text]) => (
                 <div
                   key={title}
@@ -327,9 +342,13 @@ export default function DiwaliPage() {
                 key={number}
                 className="rounded-3xl border border-white/10 bg-black p-7"
               >
-                <div className="text-sm font-black text-amber-300">{number}</div>
+                <div className="text-sm font-black text-amber-300">
+                  {number}
+                </div>
                 <h3 className="mt-5 text-xl font-black">{title}</h3>
-                <p className="mt-3 text-sm leading-6 text-white/55">{text}</p>
+                <p className="mt-3 text-sm leading-6 text-white/55">
+                  {text}
+                </p>
               </div>
             ))}
           </div>
@@ -360,7 +379,8 @@ export default function DiwaliPage() {
           </Link>
 
           <p className="mt-4 text-xs text-white/40">
-            Standard ₹799 • Large ₹1199 • COD available • Prepaid discount available
+            Standard ₹799 • Large ₹1199 • COD available • Prepaid discount
+            available
           </p>
         </div>
       </section>
