@@ -1,23 +1,23 @@
 import Link from "next/link";
 
 const standardImages = [
-  "/images/Lithophane/standard/RMX_STANDARD_11.2cm_01.jpg",
-  "/images/Lithophane/standard/RMX_STANDARD_11.2cm_02.jpg",
-  "/images/Lithophane/standard/RMX_STANDARD_11.2cm_03.jpg",
-  "/images/Lithophane/standard/RMX_STANDARD_11.2cm_04.jpg",
-  "/images/Lithophane/standard/RMX_STANDARD_11.2cm_05_SCALE_SIDE_BY_SIDE.jpg",
-  "/images/Lithophane/standard/RMX_STANDARD_11.2cm_06_SCALE_SIDE_BY_SIDE.jpg",
-  "/images/Lithophane/standard/RMX_STANDARD_11.2cm_07_DETAIL.jpg",
+  "/images/lithophane/standard/RMX_STANDARD_11.2cm_01.jpg",
+  "/images/lithophane/standard/RMX_STANDARD_11.2cm_02.jpg",
+  "/images/lithophane/standard/RMX_STANDARD_11.2cm_03.jpg",
+  "/images/lithophane/standard/RMX_STANDARD_11.2cm_04.jpg",
+  "/images/lithophane/standard/RMX_STANDARD_11.2cm_05_SCALE_SIDE_BY_SIDE.jpg",
+  "/images/lithophane/standard/RMX_STANDARD_11.2cm_06_SCALE_SIDE_BY_SIDE.jpg",
+  "/images/lithophane/standard/RMX_STANDARD_11.2cm_07_DETAIL.jpg",
 ];
 
 const largeImages = [
-  "/images/Lithophane/large/RMX_LARGE_16.7cm_01.jpg",
-  "/images/Lithophane/large/RMX_LARGE_16.7cm_02.jpg",
-  "/images/Lithophane/large/RMX_LARGE_16.7cm_03.jpg",
-  "/images/Lithophane/large/RMX_LARGE_16.7cm_04.jpg",
-  "/images/Lithophane/large/RMX_LARGE_16.7cm_05.jpg",
-  "/images/Lithophane/large/RMX_LARGE_16.7cm_06.jpg",
-  "/images/Lithophane/large/RMX_LARGE_16.7cm_07.jpg",
+  "/images/lithophane/large/RMX_LARGE_16.7cm_01.jpg",
+  "/images/lithophane/large/RMX_LARGE_16.7cm_02.jpg",
+  "/images/lithophane/large/RMX_LARGE_16.7cm_03.jpg",
+  "/images/lithophane/large/RMX_LARGE_16.7cm_04.jpg",
+  "/images/lithophane/large/RMX_LARGE_16.7cm_05.jpg",
+  "/images/lithophane/large/RMX_LARGE_16.7cm_06.jpg",
+  "/images/lithophane/large/RMX_LARGE_16.7cm_07.jpg",
 ];
 
 export default function DiwaliPage() {
